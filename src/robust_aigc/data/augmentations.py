@@ -1,6 +1,40 @@
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
+
+
+def _center_crop_fraction(image, fraction: float, **_kwargs):
+    """Crop an arbitrary-sized numpy image around its centre; tensor resizing happens later."""
+    height, width = image.shape[:2]
+    crop_height, crop_width = max(1, int(height * fraction)), max(1, int(width * fraction))
+    top, left = (height - crop_height) // 2, (width - crop_width) // 2
+    return image[top:top + crop_height, left:left + crop_width]
+
+
+def build_evaluation_augmentation(kind: str, value: float | int | None):
+    """Build one deterministic evaluation condition from the workshop specification."""
+    import albumentations as A
+    import cv2
+
+    if kind == "clean":
+        return None
+    if kind == "jpeg":
+        try: return A.Compose([A.ImageCompression(quality_range=(int(value), int(value)), p=1.0)])
+        except TypeError: return A.Compose([A.ImageCompression(quality_lower=int(value), quality_upper=int(value), p=1.0)])
+    if kind == "gaussian_blur":
+        return A.Compose([A.GaussianBlur(blur_limit=(3, 7), sigma_limit=(float(value), float(value)), p=1.0)])
+    if kind == "resize":
+        try: return A.Compose([A.Downscale(scale_range=(float(value), float(value)), interpolation_pair={"downscale": cv2.INTER_AREA, "upscale": cv2.INTER_LINEAR}, p=1.0)])
+        except TypeError: return A.Compose([A.Downscale(scale_min=float(value), scale_max=float(value), interpolation=cv2.INTER_AREA, p=1.0)])
+    if kind == "gaussian_noise":
+        try: return A.Compose([A.GaussNoise(std_range=(float(value), float(value)), p=1.0)])
+        except TypeError: return A.Compose([A.GaussNoise(var_limit=((255 * float(value)) ** 2, (255 * float(value)) ** 2), p=1.0)])
+    if kind == "color_jitter":
+        return A.Compose([A.ColorJitter(brightness=float(value), contrast=float(value), saturation=float(value), hue=0.0, p=1.0)])
+    if kind == "center_crop":
+        return A.Compose([A.Lambda(image=partial(_center_crop_fraction, fraction=float(value)), p=1.0)])
+    raise ValueError(f"Unknown evaluation transform: {kind}")
 
 
 def build_curriculum_augmentation(stage: dict[str, Any]):

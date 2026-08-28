@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Mapping
 
 import numpy as np
-from sklearn.metrics import roc_auc_score, roc_curve
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score, precision_score, recall_score, roc_auc_score, roc_curve
 
 
 def binary_operating_point_metrics(labels, scores) -> dict[str, float]:
@@ -32,6 +32,22 @@ def binary_operating_point_metrics(labels, scores) -> dict[str, float]:
         "tpr_at_1_fpr": tpr_at_1_fpr,
         "fpr_at_99_tpr": fpr_at_99_tpr,
     }
+
+
+def binary_classification_metrics(labels, scores, threshold: float = 0.5) -> dict[str, float]:
+    """Metrics used for every clean or transformed evaluation condition."""
+    labels_array = np.asarray(labels, dtype=np.int64)
+    scores_array = np.asarray(scores, dtype=np.float64)
+    metrics = binary_operating_point_metrics(labels_array, scores_array)
+    predictions = (scores_array >= threshold).astype(np.int64)
+    metrics.update({
+        "accuracy": float(accuracy_score(labels_array, predictions)),
+        "balanced_accuracy": float(balanced_accuracy_score(labels_array, predictions)),
+        "precision": float(precision_score(labels_array, predictions, zero_division=0)),
+        "recall": float(recall_score(labels_array, predictions, zero_division=0)),
+        "f1": float(f1_score(labels_array, predictions, zero_division=0)),
+    })
+    return metrics
 
 
 class EpochMetricsWriter:
