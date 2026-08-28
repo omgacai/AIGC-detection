@@ -14,6 +14,8 @@ REPO_ROOT="${SLURM_SUBMIT_DIR:?Submit from the repository root}"
 STORAGE_ROOT="${HOME}/aigc-storage"
 DATA_ROOT="${AIGC_DATA_ROOT:-${STORAGE_ROOT}/data}"
 CACHE_ROOT="${AIGC_CACHE_ROOT:-${STORAGE_ROOT}/cache}"
+CHECKPOINT_ROOT="${AIGC_CHECKPOINT_ROOT:-${STORAGE_ROOT}/checkpoints}"
+OUTPUT_ROOT="${AIGC_OUTPUT_ROOT:-${STORAGE_ROOT}/outputs}"
 CONTAINER_VENV="${CACHE_ROOT}/venvs/pytorch-2.4-cu121"
 IMAGE="docker://pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime"
 if [ ! -s "${HOME}/.kaggle/kaggle.json" ] && [ -z "${KAGGLE_API_TOKEN:-}" ] && [ -z "${KAGGLE_KEY:-}" ]; then
@@ -21,7 +23,7 @@ if [ ! -s "${HOME}/.kaggle/kaggle.json" ] && [ -z "${KAGGLE_API_TOKEN:-}" ] && [
   echo "Use ~/.kaggle/kaggle.json (mode 600) or export KAGGLE_API_TOKEN." >&2
   exit 2
 fi
-mkdir -p "${CACHE_ROOT}/apptainer" "${CACHE_ROOT}/pip"
+mkdir -p "${CACHE_ROOT}/apptainer" "${CACHE_ROOT}/pip" "${CHECKPOINT_ROOT}" "${OUTPUT_ROOT}"
 export APPTAINER_CACHEDIR="${CACHE_ROOT}/apptainer"
 
 /usr/bin/apptainer exec --bind "${REPO_ROOT}:/workspace:ro,${STORAGE_ROOT}:${STORAGE_ROOT}" --pwd /workspace "${IMAGE}" bash -lc '
@@ -30,6 +32,8 @@ export APPTAINER_CACHEDIR="${CACHE_ROOT}/apptainer"
   export PIP_CACHE_DIR="'"${CACHE_ROOT}"'/pip"
   export AIGC_DATA_ROOT="'"${DATA_ROOT}"'"
   export AIGC_CACHE_ROOT="'"${CACHE_ROOT}"'"
+  export AIGC_CHECKPOINT_ROOT="'"${CHECKPOINT_ROOT}"'"
+  export AIGC_OUTPUT_ROOT="'"${OUTPUT_ROOT}"'"
   . "'"${CONTAINER_VENV}"'/bin/activate"
   python -c "import kaggle" 2>/dev/null || python -m pip install --retries 20 --timeout 300 kaggle
   python scripts/download_datasets.py --dataset cifake --output-dir "'"${DATA_ROOT}"'"
