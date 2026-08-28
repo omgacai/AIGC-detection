@@ -18,7 +18,8 @@ cd "$REPO_ROOT"
 export HF_HOME="$AIGC_CACHE_ROOT/huggingface"
 export TORCH_HOME="$AIGC_CACHE_ROOT/torch"
 export TRANSFORMERS_CACHE="$HF_HOME"
-source .venv/bin/activate
+VENV_DIR="${AIGC_VENV_DIR:-$REPO_ROOT/.venv}"
+source "$VENV_DIR/bin/activate"
 python scripts/check_gpu.py
 : "${AIGC_MANIFEST:?Set AIGC_MANIFEST to a generated manifest CSV}"
 python scripts/dataloader_smoke_test.py --manifest "$AIGC_MANIFEST"

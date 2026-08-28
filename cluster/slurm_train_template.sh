@@ -17,5 +17,6 @@ cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
 export HF_HOME="$AIGC_CACHE_ROOT/huggingface"
 export TORCH_HOME="$AIGC_CACHE_ROOT/torch"
 export TRANSFORMERS_CACHE="$HF_HOME"
-source .venv/bin/activate
+VENV_DIR="${AIGC_VENV_DIR:-$REPO_ROOT/.venv}"
+source "$VENV_DIR/bin/activate"
 # Phase 1+: python train.py --config configs/train.yaml

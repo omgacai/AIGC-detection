@@ -12,9 +12,10 @@ cd robust-aigc
 cp configs/paths.example.yaml configs/paths.yaml
 export AIGC_DATA_ROOT=/path/to/large/cluster/storage/aigc_data
 export AIGC_CACHE_ROOT=/path/to/large/cluster/storage/aigc_cache
+export AIGC_VENV_DIR="$AIGC_CACHE_ROOT/venvs/robust-aigc"
 export HF_HOME="$AIGC_CACHE_ROOT/huggingface"
 export TORCH_HOME="$AIGC_CACHE_ROOT/torch"
-bash scripts/setup_env.sh
+VENV_DIR="$AIGC_VENV_DIR" bash scripts/setup_env.sh
 ```
 
 Before downloading, check capacity with `df -h "$AIGC_DATA_ROOT"`. Download the first dataset only on cluster storage:

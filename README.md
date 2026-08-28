@@ -29,10 +29,11 @@ Use Git for source code, but put all large artefacts on cluster-accessible stora
 ```bash
 export AIGC_DATA_ROOT=/path/to/cluster/storage/aigc_data
 export AIGC_CACHE_ROOT=/path/to/cluster/storage/aigc_cache
+export AIGC_VENV_DIR="$AIGC_CACHE_ROOT/venvs/robust-aigc"
 export HF_HOME="$AIGC_CACHE_ROOT/huggingface"
 export TORCH_HOME="$AIGC_CACHE_ROOT/torch"
 git pull
-bash scripts/setup_env.sh
+VENV_DIR="$AIGC_VENV_DIR" bash scripts/setup_env.sh
 ```
 
 `setup_env.sh` preserves an already available PyTorch installation rather than reinstalling it. If no PyTorch is available, it installs the declared dependencies and prints a CUDA diagnostic. On a cluster, confirm the resulting build works inside a GPU allocation:
