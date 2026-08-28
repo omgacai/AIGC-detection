@@ -7,7 +7,7 @@ from typing import Iterable
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 REAL_NAMES = {"real", "authentic", "natural", "0"}
-AI_NAMES = {"fake", "ai", "aigc", "generated", "synthetic", "1"}
+AI_NAMES = {"fake", "ai", "aigc", "generated", "synthetic", "diffusion_based", "gan_based", "other_based", "1"}
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,13 @@ def _label_for_path(path: Path) -> tuple[int, str | None] | None:
         if part in AI_NAMES:
             # The nearest folder above a generic class label is useful later as
             # a generator hint, but remains None if the layout has no such hint.
-            hint = parts[index - 1] if index > 0 and parts[index - 1] not in {"train", "val", "test"} else None
+            # WildFake stores an AI family followed by a generator, e.g.
+            # ``Diffusion_based/ADM``.  Preserve that useful provenance
+            # without exposing it to the model as an input feature.
+            if part in {"diffusion_based", "gan_based", "other_based"} and index + 1 < len(parts):
+                hint = parts[index + 1]
+            else:
+                hint = parts[index - 1] if index > 0 and parts[index - 1] not in {"train", "val", "test"} else None
             return 1, hint
     return None
 

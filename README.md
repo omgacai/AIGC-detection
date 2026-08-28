@@ -105,6 +105,7 @@ sbatch cluster/slurm_download_cifake.sh
 
 # Download, inspect the reported folders, then register only if its real/AI layout is confirmed.
 sbatch cluster/slurm_download_wildfake.sh
+# Wait for every array element to finish, then register the downloaded images:
 sbatch cluster/slurm_prepare_wildfake.sh
 
 # This requires all three manifests and rejects organiser_demo records.
