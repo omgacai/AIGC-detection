@@ -30,6 +30,8 @@ Use Git for source code, but put all large artefacts on cluster-accessible stora
 export AIGC_DATA_ROOT=/path/to/cluster/storage/aigc_data
 export AIGC_CACHE_ROOT=/path/to/cluster/storage/aigc_cache
 export AIGC_VENV_DIR="$AIGC_CACHE_ROOT/venvs/robust-aigc"
+export AIGC_CHECKPOINT_ROOT=/path/to/cluster/storage/aigc_checkpoints
+export AIGC_OUTPUT_ROOT=/path/to/cluster/storage/aigc_outputs
 export HF_HOME="$AIGC_CACHE_ROOT/huggingface"
 export TORCH_HOME="$AIGC_CACHE_ROOT/torch"
 git pull
@@ -78,6 +80,12 @@ See [cluster/README.md](cluster/README.md). The Slurm scripts intentionally use 
 ```bash
 sbatch cluster/slurm_smoke_test.sh
 ```
+
+## Future training outputs
+
+The training utilities are ready without introducing a model. Future `train.py` should write each epoch's loss/validation metrics through `EpochMetricsWriter`, which creates `metrics.jsonl` and `metrics.csv` under `$AIGC_OUTPUT_ROOT/<run-name>/`. `CheckpointManager` atomically updates `$AIGC_CHECKPOINT_ROOT/<run-name>/last.pt` each epoch and writes `best.pt` only when the configured internal-validation metric improves. This preserves a resumable state with model, optimizer, scheduler, epoch, metrics, and training arguments.
+
+Never put needed checkpoints in `$SLURM_TMPDIR`; it is node-local temporary storage and can disappear after the Slurm job.
 
 ## Status boundary
 

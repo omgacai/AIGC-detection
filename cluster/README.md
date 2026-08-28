@@ -13,10 +13,14 @@ cp configs/paths.example.yaml configs/paths.yaml
 export AIGC_DATA_ROOT=/path/to/large/cluster/storage/aigc_data
 export AIGC_CACHE_ROOT=/path/to/large/cluster/storage/aigc_cache
 export AIGC_VENV_DIR="$AIGC_CACHE_ROOT/venvs/robust-aigc"
+export AIGC_CHECKPOINT_ROOT=/path/to/large/cluster/storage/aigc_checkpoints
+export AIGC_OUTPUT_ROOT=/path/to/large/cluster/storage/aigc_outputs
 export HF_HOME="$AIGC_CACHE_ROOT/huggingface"
 export TORCH_HOME="$AIGC_CACHE_ROOT/torch"
 VENV_DIR="$AIGC_VENV_DIR" bash scripts/setup_env.sh
 ```
+
+Keep resumable `last.pt`, validation-selected `best.pt`, `metrics.jsonl`, and `metrics.csv` in those persistent roots. Use `$SLURM_TMPDIR` only for temporary package/data staging: it belongs to the allocated compute node and may be removed after the job.
 
 Before downloading, check capacity with `df -h "$AIGC_DATA_ROOT"`. Download the first dataset only on cluster storage:
 

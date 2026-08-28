@@ -14,6 +14,8 @@ set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
 : "${AIGC_DATA_ROOT:?Set cluster dataset storage}"
 : "${AIGC_CACHE_ROOT:?Set cluster cache storage}"
+: "${AIGC_CHECKPOINT_ROOT:?Set persistent checkpoint storage}"
+: "${AIGC_OUTPUT_ROOT:?Set persistent output/metrics storage}"
 export HF_HOME="$AIGC_CACHE_ROOT/huggingface"
 export TORCH_HOME="$AIGC_CACHE_ROOT/torch"
 export TRANSFORMERS_CACHE="$HF_HOME"
