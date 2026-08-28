@@ -3,6 +3,7 @@ import pytest
 
 from robust_aigc.utils.checkpointing import CheckpointManager
 from robust_aigc.utils.metrics import EpochMetricsWriter, TensorBoardMetricsWriter, binary_operating_point_metrics
+from robust_aigc.utils.metrics import EpochReporter
 
 
 def test_checkpoint_manager_keeps_best_and_last(tmp_path):
@@ -40,3 +41,10 @@ def test_tensorboard_writer_creates_event_file(tmp_path):
     writer.write(1, {"train_loss": 0.3})
     writer.close()
     assert list(writer.log_dir.glob("events.out.tfevents.*"))
+
+
+def test_epoch_reporter_writes_console_log_and_metric_files(tmp_path):
+    reporter = EpochReporter(tmp_path / "outputs", "run-1", tensorboard=False)
+    reporter.report(1, {"train_loss": 0.3, "tpr_at_1_fpr": 0.2})
+    reporter.close()
+    assert "epoch=1" in (tmp_path / "outputs" / "run-1" / "training.log").read_text()

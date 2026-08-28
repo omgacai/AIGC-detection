@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 from pathlib import Path
 from typing import Mapping
 
@@ -74,3 +75,33 @@ class TensorBoardMetricsWriter:
 
     def close(self) -> None:
         self.writer.close()
+
+
+class EpochReporter:
+    """One end-of-epoch reporting path: console, file log, JSONL, CSV, TensorBoard."""
+
+    def __init__(self, output_root: str | Path, run_name: str, tensorboard: bool = True):
+        self.run_dir = Path(output_root) / run_name
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.metrics = EpochMetricsWriter(output_root, run_name)
+        self.tensorboard = TensorBoardMetricsWriter(output_root, run_name) if tensorboard else None
+        self.logger = logging.getLogger(f"robust_aigc.{run_name}")
+        self.logger.setLevel(logging.INFO)
+        self.logger.propagate = False
+        if not self.logger.handlers:
+            formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+            stream = logging.StreamHandler(); stream.setFormatter(formatter)
+            file_handler = logging.FileHandler(self.run_dir / "training.log", encoding="utf-8"); file_handler.setFormatter(formatter)
+            self.logger.addHandler(stream); self.logger.addHandler(file_handler)
+
+    def report(self, epoch: int, metrics: Mapping[str, float | int]) -> dict:
+        record = self.metrics.write(epoch, metrics)
+        if self.tensorboard:
+            self.tensorboard.write(epoch, metrics)
+        rendered = " | ".join(f"{name}={value:.6f}" for name, value in record.items() if name != "epoch")
+        self.logger.info("epoch=%d | %s", epoch, rendered)
+        return record
+
+    def close(self) -> None:
+        if self.tensorboard:
+            self.tensorboard.close()

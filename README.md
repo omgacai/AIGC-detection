@@ -89,6 +89,14 @@ The training utilities are ready without introducing a model. Future `train.py` 
 
 Never put needed checkpoints in `$SLURM_TMPDIR`; it is node-local temporary storage and can disappear after the Slurm job.
 
+## Experiment configuration
+
+[`configs/dinov3_forensic.toml`](configs/dinov3_forensic.toml) is the source of truth for the DINOv3-Forensic architecture: selected dataset/manifests, DINOv3 ViT-L/16 backbone, tapped layers (8/16/24), multi-scale head dimensions, BCE plus cosine-consistency loss, optimizer/scheduler, all curriculum augmentation values, checkpoint policy, and every tracked metric. Copy it for a new experiment; record its filename in the run metadata rather than changing hyperparameters only in shell commands.
+
+The TOML declares Albumentations-compatible curriculum settings for JPEG compression, Gaussian blur, downscale/upscale, Gaussian noise, color jitter, and center crop. The data module does not apply them until the training loop is implemented, which prevents accidental unreviewed augmentation changes during Phase 0.
+
+At each future epoch end, use `EpochReporter($AIGC_OUTPUT_ROOT, run_name).report(epoch, metrics)`. It prints an `[INFO] epoch=…` line, appends CSV/JSONL metrics, writes `training.log`, and emits TensorBoard scalars from the same metrics dictionary.
+
 ## TensorBoard monitoring
 
 Future training code should also call `TensorBoardMetricsWriter($AIGC_OUTPUT_ROOT, run_name).write(epoch, metrics)` at the end of every epoch. This writes event files under `$AIGC_OUTPUT_ROOT/<run-name>/tensorboard/` alongside the CSV and JSONL records.
