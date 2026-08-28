@@ -19,10 +19,10 @@ CACHE_ROOT="${AIGC_CACHE_ROOT:-${STORAGE_ROOT}/cache}"
 CHECKPOINT_ROOT="${AIGC_CHECKPOINT_ROOT:-${STORAGE_ROOT}/checkpoints}"
 OUTPUT_ROOT="${AIGC_OUTPUT_ROOT:-${STORAGE_ROOT}/outputs}"
 MANIFEST="${AIGC_MANIFEST:-${DATA_ROOT}/manifests/sid_all.csv}"
-PYTHON_DEPS="${CACHE_ROOT}/container-python-deps"
+CONTAINER_VENV="${CACHE_ROOT}/venvs/pytorch-2.4-cu121"
 IMAGE="docker://pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime"
 
-mkdir -p "${CACHE_ROOT}/apptainer" "${CACHE_ROOT}/huggingface" "${CACHE_ROOT}/pip" "${PYTHON_DEPS}" "${CHECKPOINT_ROOT}" "${OUTPUT_ROOT}"
+mkdir -p "${CACHE_ROOT}/apptainer" "${CACHE_ROOT}/huggingface" "${CACHE_ROOT}/pip" "${CACHE_ROOT}/venvs" "${CHECKPOINT_ROOT}" "${OUTPUT_ROOT}"
 export APPTAINER_CACHEDIR="${CACHE_ROOT}/apptainer"
 
 if [ ! -f "${MANIFEST}" ]; then
@@ -39,17 +39,21 @@ echo "Manifest: ${MANIFEST}"
   "${IMAGE}" \
   bash -lc '
     set -eu
-    export PYTHONPATH="'"${PYTHON_DEPS}"':/workspace/src${PYTHONPATH:+:$PYTHONPATH}"
+    export PYTHONPATH=/workspace/src
     export PIP_CACHE_DIR="'"${CACHE_ROOT}"'/pip"
     export HF_HOME="'"${CACHE_ROOT}"'/huggingface"
     export AIGC_DATA_ROOT="'"${DATA_ROOT}"'"
     export AIGC_CACHE_ROOT="'"${CACHE_ROOT}"'"
     export AIGC_CHECKPOINT_ROOT="'"${CHECKPOINT_ROOT}"'"
     export AIGC_OUTPUT_ROOT="'"${OUTPUT_ROOT}"'"
+    if [ ! -x "'"${CONTAINER_VENV}"'/bin/python" ]; then
+      python -m venv --system-site-packages "'"${CONTAINER_VENV}"'"
+    fi
+    . "'"${CONTAINER_VENV}"'/bin/activate"
     python --version
     python -c "import torch; print(\"torch=\", torch.__version__); print(\"gpu=\", torch.cuda.get_device_name(0))"
     if ! python -c "import transformers, albumentations, sklearn, tensorboard; assert transformers.__version__ == \"4.56.2\""; then
-      python -m pip install --target "'"${PYTHON_DEPS}"'" --upgrade --retries 20 --timeout 300 "transformers==4.56.2" albumentations scikit-learn tensorboard
+      python -m pip install --upgrade --retries 20 --timeout 300 "transformers==4.56.2" albumentations scikit-learn tensorboard
     fi
     python -c "import transformers, albumentations, sklearn, tensorboard; print(\"Python dependencies available\")"
     python scripts/train.py --config configs/dinov3_forensic.toml --manifest "'"${MANIFEST}"'" --epochs 1
