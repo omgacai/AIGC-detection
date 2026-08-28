@@ -72,7 +72,7 @@ def validate(model, loader, device):
 
 
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument("--config", type=Path, default=Path("configs/dinov3_forensic.toml")); parser.add_argument("--manifest", type=Path); parser.add_argument("--resume", type=Path)
+    parser = argparse.ArgumentParser(); parser.add_argument("--config", type=Path, default=Path("configs/dinov3_forensic.toml")); parser.add_argument("--manifest", type=Path); parser.add_argument("--resume", type=Path); parser.add_argument("--epochs", type=int, help="Optional cap for a smoke run; does not modify the TOML config.")
     args = parser.parse_args(); config = load_toml(args.config); set_seed(config["run"]["seed"])
     paths = resolve_paths(create=True); configure_caches(paths)
     output_root = Path(os.environ.get("AIGC_OUTPUT_ROOT", paths.output_root)); checkpoint_root = Path(os.environ.get("AIGC_CHECKPOINT_ROOT", paths.checkpoint_root))
@@ -87,6 +87,10 @@ def main():
     model = DINOv3Forensic(config).to(device)
     optimizer = AdamW((p for p in model.parameters() if p.requires_grad), lr=config["optimizer"]["learning_rate"], weight_decay=config["optimizer"]["weight_decay"])
     epochs, warmup = training["epochs"], config["scheduler"]["warmup_epochs"]
+    if args.epochs is not None:
+        if args.epochs < 1:
+            raise ValueError("--epochs must be at least 1")
+        epochs = min(epochs, args.epochs)
     scheduler = LambdaLR(optimizer, lambda e: min(1.0, (e + 1) / warmup) if e < warmup else 0.5 * (1 + torch.cos(torch.tensor(torch.pi * (e - warmup) / max(1, epochs - warmup))).item()))
     scaler = torch.amp.GradScaler("cuda")
     reporter = EpochReporter(output_root, config["run"]["name"], tensorboard=config["logging"]["tensorboard"])
