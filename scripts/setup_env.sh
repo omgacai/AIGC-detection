@@ -7,8 +7,8 @@ VENV_DIR="${VENV_DIR:-$REPO_ROOT/.venv}"
 
 "$PYTHON_BIN" - <<'PY'
 import sys
-if not ((3, 10) <= sys.version_info < (3, 12)):
-    raise SystemExit(f"[ERROR] Python 3.10 or 3.11 is required; found {sys.version.split()[0]}")
+if not ((3, 10) <= sys.version_info < (3, 13)):
+    raise SystemExit(f"[ERROR] Python 3.10, 3.11, or 3.12 is required; found {sys.version.split()[0]}")
 PY
 
 if [[ ! -d "$VENV_DIR" ]]; then

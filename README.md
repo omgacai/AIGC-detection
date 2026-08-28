@@ -20,7 +20,7 @@ python scripts/check_gpu.py
 pytest -q
 ```
 
-On a Mac, CUDA being unavailable is expected. It is a diagnostic, not a failure of the code.
+Python 3.10–3.12 is supported. On a Mac, CUDA being unavailable is expected. It is a diagnostic, not a failure of the code.
 
 ## Cluster setup
 
