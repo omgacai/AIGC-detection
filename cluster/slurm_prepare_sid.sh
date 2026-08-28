@@ -26,6 +26,9 @@ export APPTAINER_CACHEDIR="${CACHE_ROOT}/apptainer"
   export PYTHONPATH=/workspace/src
   export AIGC_DATA_ROOT="'"${DATA_ROOT}"'"
   . "'"${CONTAINER_VENV}"'/bin/activate"
+  # SID_Set is Parquet; keep this dependency in the persistent container venv
+  # so a resumed/full preparation job does not download it again.
+  python -c "import pyarrow" 2>/dev/null || python -m pip install --retries 20 --timeout 300 pyarrow
   python scripts/prepare_sid.py \
     --output-dir "'"${DATA_ROOT}"'/'"${DATASET_NAME}"'_images" \
     --manifest-dir "'"${DATA_ROOT}"'/manifests" \
