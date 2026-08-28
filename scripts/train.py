@@ -216,9 +216,11 @@ def main():
             metrics.update(validate(model, val_loader, device))
         metrics["learning_rate"] = optimizer.param_groups[0]["lr"]
         reporter.report(epoch, metrics)
+        # Advance before serializing: a resumed job must start with the next
+        # epoch's LR rather than repeating the just-completed epoch's LR.
+        scheduler.step()
         if checkpoints:
             checkpoints.save_epoch(epoch=epoch, model=model, optimizer=optimizer, scheduler=scheduler, metrics=metrics, training_args={"config": config, "config_path": str(args.config)}, ema_state_dict=ema.state_dict() if ema is not None else None)
-        scheduler.step()
     reporter.logger.info("job_finished completed_epochs=%d next_epoch=%d total_epochs=%d", max(0, stop_epoch - start), stop_epoch, epochs)
     if checkpoints and stop_epoch < epochs:
         reporter.logger.info("resume_next_job=%s", checkpoints.run_dir / "last.pt")
