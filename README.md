@@ -58,15 +58,17 @@ The scanner accepts common folder names such as `real`, `authentic`, `fake`, `ai
 
 `CIFAKE` remains available as a quick low-resolution pipeline check when Kaggle credentials are configured; it is not the preferred robustness dataset. `WildFake` is deliberately manual until its ModelScope layout and overlap with organiser data are verified.
 
-## DINOv2 availability only
+## DINOv3 availability only
 
-No DINOv2 training occurs in Phase 0. After the data smoke test, run inside a GPU job:
+No DINOv3 training occurs in Phase 0. The default is Meta's DINOv3 ViT-L/16 checkpoint, `facebook/dinov3-vitl16-pretrain-lvd1689m` (about 300M parameters): comfortably under the 2B limit and much more practical than the 7B teacher for the observed 12 GB TITAN V nodes.
+
+After the data smoke test, accept the DINOv3 licence on Hugging Face and authenticate with `hf auth login` (never commit the token), then run inside a GPU job:
 
 ```bash
-python scripts/check_dinov2.py
+python scripts/check_dinov3.py
 ```
 
-It loads `facebook/dinov2-large`, runs one mixed-precision forward pass, reports feature shape and GPU memory, releases memory, and suggests Base only on out-of-memory.
+It loads DINOv3 ViT-L/16, verifies the checkpoint has fewer than 2B parameters, runs one mixed-precision forward pass, reports feature shape and GPU memory, releases memory, and suggests DINOv3 ViT-B/16 (about 86M) only on out-of-memory.
 
 ## Slurm
 
@@ -78,4 +80,4 @@ sbatch cluster/slurm_smoke_test.sh
 
 ## Status boundary
 
-Stop after one real dataset is downloaded, manifest-backed, verified, previewed, and produces a DataLoader batch; then validate DINOv2 on GPU. Robust transforms, paired learning, feature losses, model training, and tuning are intentionally deferred to Phase 1.
+Stop after one real dataset is downloaded, manifest-backed, verified, previewed, and produces a DataLoader batch; then validate DINOv3 on GPU. Robust transforms, paired learning, feature losses, model training, and tuning are intentionally deferred to Phase 1.

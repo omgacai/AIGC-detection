@@ -22,4 +22,4 @@ source .venv/bin/activate
 python scripts/check_gpu.py
 : "${AIGC_MANIFEST:?Set AIGC_MANIFEST to a generated manifest CSV}"
 python scripts/dataloader_smoke_test.py --manifest "$AIGC_MANIFEST"
-python scripts/check_dinov2.py
+python scripts/check_dinov3.py
