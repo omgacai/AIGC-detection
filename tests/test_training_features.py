@@ -1,7 +1,7 @@
 import torch
 
 from robust_aigc.utils.ema import TrainableParameterEMA
-from scripts.probe_dinov3_layers import parse_layers, pooled_patch_features
+from scripts.probe_dinov3_layers import build_probe_feature_sets, parse_layers, parse_seeds, pooled_patch_features
 from scripts.train import binary_js_divergence, job_stop_epoch, optimizer_parameter_groups, smooth_binary_targets, supervised_contrastive_loss
 
 
@@ -62,3 +62,12 @@ def test_layer_probe_selects_blocks_and_mean_pools_patch_tokens():
     pooled = pooled_patch_features(hidden, num_register_tokens=1)
     assert tuple(pooled.shape) == (2, 4)
     assert torch.allclose(pooled.norm(dim=1), torch.ones(2))
+
+
+def test_layer_probe_builds_the_three_required_ablation_representations():
+    features = {layer: torch.full((2, 3), float(layer)).numpy() for layer in range(1, 13)}
+    representations = build_probe_feature_sets(features, range(1, 13))
+    assert representations["L12_only"].shape == (2, 3)
+    assert representations["L4_L8_L12_fusion"].shape == (2, 9)
+    assert representations["all_layers_concat"].shape == (2, 36)
+    assert parse_seeds("42, 1337") == (42, 1337)
