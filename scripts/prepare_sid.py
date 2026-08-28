@@ -1,19 +1,41 @@
 #!/usr/bin/env python3
-"""Decode a balanced image-only subset from SID Parquet shards for training."""
+"""Decode a deterministic, balanced training subset from all SID Parquet shards.
+
+SID_Set is distributed as Parquet rather than labelled image directories. This
+samples every downloaded shard before decoding images, so an early-shard slice
+cannot accidentally become the training data. SID's raw three-way label is
+used only here and is never emitted to the final manifest.
+"""
 from __future__ import annotations
 
 import argparse
+import hashlib
+import heapq
 import io
 import os
 import re
 import sys
+from collections import Counter, defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from robust_aigc.data.registry import build_records_from_directory, sid_binary_label, write_manifest
+from robust_aigc.data.registry import sid_binary_label, write_manifest
 from robust_aigc.data.splits import assign_deterministic_splits, persist_split_manifests, validate_split_isolation
+
+
+@dataclass(frozen=True, order=True)
+class Candidate:
+    """A row locator ranked reproducibly without retaining image payloads."""
+
+    rank: int
+    parquet_path: str
+    group_index: int
+    row_index: int
+    raw_label: int
+    image_id: str
 
 
 def image_payload(value) -> bytes:
@@ -31,16 +53,111 @@ def safe_stem(value: object, fallback: str) -> str:
     return candidate or fallback
 
 
+def rank_for(seed: int, parquet_path: Path, group_index: int, row_index: int, image_id: object) -> int:
+    """Stable pseudo-random rank independent of download/scan order."""
+    key = f"{seed}|{parquet_path.name}|{group_index}|{row_index}|{image_id}".encode()
+    return int.from_bytes(hashlib.sha256(key).digest()[:8], "big")
+
+
+def raw_quotas(raw_counts: Counter[int], max_per_class: int) -> dict[int, int]:
+    """Balance real vs AI and preserve SID's two AI-source categories."""
+    if max_per_class <= 0:
+        raise ValueError("--max-per-class must be positive; choose an explicit safe subset size.")
+    if raw_counts[0] < max_per_class:
+        raise ValueError(f"SID has only {raw_counts[0]} real rows, fewer than requested {max_per_class}.")
+    first = min(raw_counts[1], (max_per_class + 1) // 2)
+    second = min(raw_counts[2], max_per_class - first)
+    first = min(raw_counts[1], first + max(0, max_per_class - first - second))
+    second = min(raw_counts[2], max_per_class - first)
+    if first + second < max_per_class:
+        raise ValueError("SID does not contain enough AI-labelled rows for the requested balanced subset.")
+    return {0: max_per_class, 1: first, 2: second}
+
+
+def count_raw_labels(parquet_files: list[Path], pq: object) -> Counter[int]:
+    counts: Counter[int] = Counter()
+    for parquet_path in parquet_files:
+        reader = pq.ParquetFile(parquet_path)
+        for group_index in range(reader.num_row_groups):
+            table = reader.read_row_group(group_index, columns=["label"])
+            counts.update(int(value) for value in table.column("label").to_pylist())
+        print(f"[INFO] counted {parquet_path.name}: raw={dict(sorted(counts.items()))}", flush=True)
+    return counts
+
+
+def select_candidates(parquet_files: list[Path], pq: object, quotas: dict[int, int], seed: int) -> list[Candidate]:
+    """Keep only the lowest deterministic ranks for each raw SID category."""
+    # Negative ranks make the heap root the worst retained candidate, keeping
+    # memory bounded even while reading the complete SID collection.
+    heaps: dict[int, list[tuple[int, Candidate]]] = {label: [] for label in quotas}
+    for parquet_path in parquet_files:
+        reader = pq.ParquetFile(parquet_path)
+        for group_index in range(reader.num_row_groups):
+            table = reader.read_row_group(group_index, columns=["img_id", "label"])
+            for row_index, row in enumerate(table.to_pylist()):
+                raw_label = int(row["label"])
+                if raw_label not in quotas:
+                    raise ValueError(f"Unexpected SID label {raw_label}; expected 0, 1, or 2")
+                candidate = Candidate(
+                    rank_for(seed, parquet_path, group_index, row_index, row.get("img_id")),
+                    str(parquet_path), group_index, row_index, raw_label, str(row.get("img_id") or ""),
+                )
+                heap = heaps[raw_label]
+                entry = (-candidate.rank, candidate)
+                if len(heap) < quotas[raw_label]:
+                    heapq.heappush(heap, entry)
+                elif entry > heap[0]:
+                    heapq.heapreplace(heap, entry)
+        print(f"[INFO] sampled {parquet_path.name}", flush=True)
+    selected = [candidate for heap in heaps.values() for _, candidate in heap]
+    selected.sort()
+    selected_counts = Counter(candidate.raw_label for candidate in selected)
+    if any(selected_counts[label] != quota for label, quota in quotas.items()):
+        raise RuntimeError(f"Selection did not meet quotas: selected={dict(selected_counts)} requested={quotas}")
+    return selected
+
+
+def ensure_empty_destination(destination: Path) -> None:
+    existing = [path for path in destination.rglob("*") if path.is_file()]
+    if existing:
+        raise FileExistsError(
+            f"Refusing to mix a new SID sample with {len(existing)} existing file(s) in {destination}. "
+            "Choose a new --output-dir (recommended) or archive the old dataset first."
+        )
+    for class_name in ("real", "aigc"):
+        (destination / class_name).mkdir(parents=True, exist_ok=True)
+
+
+def decode_candidates(selected: list[Candidate], pq: object, destination_root: Path) -> list[dict]:
+    requested: dict[tuple[str, int], dict[int, Candidate]] = defaultdict(dict)
+    for candidate in selected:
+        requested[(candidate.parquet_path, candidate.group_index)][candidate.row_index] = candidate
+    records: list[dict] = []
+    for (parquet_name, group_index), rows in sorted(requested.items()):
+        table = pq.ParquetFile(parquet_name).read_row_group(group_index, columns=["image"])
+        images = table.column("image").to_pylist()
+        for row_index, candidate in sorted(rows.items()):
+            binary = sid_binary_label(candidate.raw_label)
+            class_name = "aigc" if binary else "real"
+            stem = safe_stem(candidate.image_id, f"row_{row_index}")
+            filename = f"sid_{Path(parquet_name).stem}_{group_index}_{row_index}_{stem}.jpg"
+            destination = destination_root / class_name / filename
+            with Image.open(io.BytesIO(image_payload(images[row_index]))) as image:
+                image.convert("RGB").save(destination, format="JPEG", quality=95)
+            records.append({"path": str(destination), "label": binary, "source_dataset": "sid", "generator": None, "split": "train"})
+        print(f"[INFO] decoded {Path(parquet_name).name} row-group {group_index}", flush=True)
+    return records
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-dir", type=Path, default=Path(os.environ.get("AIGC_DATA_ROOT", "data")) / "sid")
-    parser.add_argument("--output-dir", type=Path, default=Path(os.environ.get("AIGC_DATA_ROOT", "data")) / "sid_smoke_images")
+    parser.add_argument("--output-dir", type=Path, default=Path(os.environ.get("AIGC_DATA_ROOT", "data")) / "sid_balanced_images")
     parser.add_argument("--manifest-dir", type=Path, default=Path(os.environ.get("AIGC_DATA_ROOT", "data")) / "manifests")
-    parser.add_argument("--manifest-name", default="sid_smoke")
-    parser.add_argument("--max-per-class", type=int, default=1000, help="0 decodes every row; default is a balanced 2,000-image smoke set.")
+    parser.add_argument("--manifest-name", default="sid_balanced")
+    parser.add_argument("--max-per-class", type=int, default=10000, help="Number of real and AI images each; AI is balanced across SID's two AI sources.")
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
-    if args.max_per_class < 0:
-        raise ValueError("--max-per-class must be zero or positive")
     try:
         import pyarrow.parquet as pq
     except ImportError as error:
@@ -48,37 +165,22 @@ def main() -> None:
     parquet_files = sorted((args.source_dir / "data").glob("*.parquet"))
     if not parquet_files:
         raise FileNotFoundError(f"No SID Parquet files found in {args.source_dir / 'data'}")
-    for class_name in ("real", "aigc"):
-        (args.output_dir / class_name).mkdir(parents=True, exist_ok=True)
-    written = {0: 0, 1: 0}
-    for parquet_path in parquet_files:
-        reader = pq.ParquetFile(parquet_path)
-        for group_index in range(reader.num_row_groups):
-            table = reader.read_row_group(group_index, columns=["img_id", "image", "label"])
-            for row_index, row in enumerate(table.to_pylist()):
-                binary = sid_binary_label(int(row["label"]))
-                if args.max_per_class and written[binary] >= args.max_per_class:
-                    continue
-                class_name = "aigc" if binary else "real"
-                stem = safe_stem(row.get("img_id"), f"{parquet_path.stem}_{group_index}_{row_index}")
-                destination = args.output_dir / class_name / f"{stem}.jpg"
-                if not destination.exists():
-                    with Image.open(io.BytesIO(image_payload(row["image"]))) as image:
-                        image.convert("RGB").save(destination, format="JPEG", quality=95)
-                written[binary] += 1
-            if args.max_per_class and all(written[key] >= args.max_per_class for key in written):
-                break
-        print(f"[INFO] {parquet_path.name}: real={written[0]} aigc={written[1]}", flush=True)
-        if args.max_per_class and all(written[key] >= args.max_per_class for key in written):
-            break
-    if not written[0] or not written[1]:
-        raise RuntimeError(f"Could not prepare both classes: {written}")
-    records = assign_deterministic_splits(build_records_from_directory(args.output_dir, "sid"))
+
+    raw_counts = count_raw_labels(parquet_files, pq)
+    quotas = raw_quotas(raw_counts, args.max_per_class)
+    print(f"[INFO] selecting across {len(parquet_files)} shards with raw quotas={quotas}", flush=True)
+    selected = select_candidates(parquet_files, pq, quotas, args.seed)
+    ensure_empty_destination(args.output_dir)
+    records = decode_candidates(selected, pq, args.output_dir)
+    records = assign_deterministic_splits(records, seed=args.seed)
     validate_split_isolation(records)
     args.manifest_dir.mkdir(parents=True, exist_ok=True)
     persist_split_manifests(records, args.manifest_dir, args.manifest_name)
     manifest = write_manifest(records, args.manifest_dir / f"{args.manifest_name}_all.csv")
-    print(f"[INFO] Prepared {sum(written.values())} images; manifest: {manifest}")
+    counts = Counter((record["split"], int(record["label"])) for record in records)
+    print(f"[INFO] Prepared {len(records)} images; manifest: {manifest}")
+    for key in sorted(counts):
+        print(f"[INFO] split={key[0]} label={key[1]} count={counts[key]}")
 
 
 if __name__ == "__main__":

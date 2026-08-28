@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from robust_aigc.data.registry import DATASETS, build_records_from_directory, write_manifest
-from robust_aigc.data.splits import assign_deterministic_splits, persist_split_manifests, validate_split_isolation
+from robust_aigc.data.splits import persist_split_manifests, preserve_directory_splits, validate_split_isolation
 from robust_aigc.utils.paths import configure_caches, resolve_paths
 
 
@@ -58,7 +58,7 @@ def main() -> int:
         print("[INFO] SID_Set is stored as Parquet shards. Run scripts/prepare_sid.py to decode a chosen image subset and create manifests.")
         return 0
     if not args.no_manifest:
-        records = assign_deterministic_splits(build_records_from_directory(destination, args.dataset))
+        records = preserve_directory_splits(build_records_from_directory(destination, args.dataset), destination)
         validate_split_isolation(records)
         manifest_dir = root / "manifests"
         persist_split_manifests(records, manifest_dir, args.dataset)

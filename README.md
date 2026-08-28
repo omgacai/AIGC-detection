@@ -81,6 +81,49 @@ See [cluster/README.md](cluster/README.md). The Slurm scripts intentionally use 
 sbatch cluster/slurm_smoke_test.sh
 ```
 
+## Full-training dataset workflow
+
+The full DINOv3 experiment trains only on **SID, CIFAKE, and WildFake**. The
+organiser's COCO val2017 and DALL·E Advanced images are evaluation-only; they
+are deliberately rejected from the merged training manifest.
+
+After reviewing, committing, pushing, and pulling the current code onto the
+cluster, prepare the data in this order:
+
+```bash
+cd ~/robust-aigc
+export AIGC_DATA_ROOT="$HOME/aigc-storage/data"
+export AIGC_CACHE_ROOT="$HOME/aigc-storage/cache"
+export AIGC_CHECKPOINT_ROOT="$HOME/aigc-storage/checkpoints"
+export AIGC_OUTPUT_ROOT="$HOME/aigc-storage/outputs"
+
+# Samples 10,000 real + 10,000 AI SID images across all 249 Parquet shards.
+sbatch cluster/slurm_prepare_sid.sh
+
+# Requires ~/.kaggle/kaggle.json with mode 600 (or Kaggle environment credentials).
+sbatch cluster/slurm_download_cifake.sh
+
+# Download, inspect the reported folders, then register only if its real/AI layout is confirmed.
+sbatch cluster/slurm_download_wildfake.sh
+sbatch cluster/slurm_prepare_wildfake.sh
+
+# This requires all three manifests and rejects organiser_demo records.
+sbatch cluster/slurm_merge_training_manifests.sh
+```
+
+The CIFAKE and WildFake registration code preserves conventional `test/`
+folders as held-out test data instead of silently folding them into training.
+Once the merge job succeeds, submit a four-epoch resumable chunk:
+
+```bash
+export AIGC_MANIFEST="$AIGC_DATA_ROOT/manifests/aigc_mixed_all.csv"
+sbatch cluster/slurm_train_full.sh
+```
+
+The output log prints a `resume_next_job=.../last.pt` line if more epochs
+remain. Resume the next chunk with `export AIGC_RESUME=/exact/path/to/last.pt`
+before running the same `sbatch` command again.
+
 ## Future training outputs
 
 The training utilities are ready without introducing a model. Future `train.py` should write each epoch's loss/validation metrics through `EpochMetricsWriter`, which creates `metrics.jsonl` and `metrics.csv` under `$AIGC_OUTPUT_ROOT/<run-name>/`. `binary_operating_point_metrics(labels, scores)` adds ROC-AUC, `tpr_at_1_fpr` (higher is better), and `fpr_at_99_tpr` (lower is better); scores must represent confidence in the AI-generated class.

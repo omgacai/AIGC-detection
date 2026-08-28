@@ -7,7 +7,7 @@ from collections import Counter
 from pathlib import Path
 
 from robust_aigc.data.registry import build_records_from_directory, write_manifest
-from robust_aigc.data.splits import assign_deterministic_splits, persist_split_manifests, validate_split_isolation
+from robust_aigc.data.splits import persist_split_manifests, preserve_directory_splits, validate_split_isolation
 
 
 def main() -> None:
@@ -17,9 +17,7 @@ def main() -> None:
     parser.add_argument("--manifest-dir", required=True, type=Path)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
-    records = assign_deterministic_splits(
-        build_records_from_directory(args.data_dir, args.dataset), seed=args.seed
-    )
+    records = preserve_directory_splits(build_records_from_directory(args.data_dir, args.dataset), args.data_dir, seed=args.seed)
     validate_split_isolation(records)
     args.manifest_dir.mkdir(parents=True, exist_ok=True)
     write_manifest(records, args.manifest_dir / f"{args.dataset}_all.csv")
