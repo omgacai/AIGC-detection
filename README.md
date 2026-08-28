@@ -140,6 +140,11 @@ The TOML declares Albumentations-compatible curriculum settings for JPEG compres
 
 At each future epoch end, use `EpochReporter($AIGC_OUTPUT_ROOT, run_name).report(epoch, metrics)`. It prints an `[INFO] epoch=…` line, appends CSV/JSONL metrics, writes `training.log`, and emits TensorBoard scalars from the same metrics dictionary.
 
+During training, `logging.batch_log_every_steps = 1` emits a live line for
+every batch with loss, instantaneous clean-view accuracy, running epoch
+accuracy, and learning rate. Increase the value (for example, to `20`) if a
+large run produces more console output than wanted.
+
 ## TensorBoard monitoring
 
 Future training code should also call `TensorBoardMetricsWriter($AIGC_OUTPUT_ROOT, run_name).write(epoch, metrics)` at the end of every epoch. This writes event files under `$AIGC_OUTPUT_ROOT/<run-name>/tensorboard/` alongside the CSV and JSONL records.

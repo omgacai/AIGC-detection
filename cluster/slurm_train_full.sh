@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Full DINOv3 curriculum, executed in bounded resumable epoch chunks.
-#SBATCH --job-name=dinov3-full
+# Full ViT-B DINOv3 curriculum, executed in bounded resumable epoch chunks.
+#SBATCH --job-name=dinov3-vitb-full
 #SBATCH --partition=gpu
+# ViT-B is selected so complete fine-tuning fits on the known-working Titan V.
 #SBATCH --nodelist=xgpd0
 #SBATCH --gres=gpu:nv:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=02:55:00
-#SBATCH --output=slurm-train-full-%j.out
+#SBATCH --output=slurm-train-vitb-full-%j.out
 
 set -eu
 REPO_ROOT="${SLURM_SUBMIT_DIR:?Submit from the repository root}"
@@ -18,7 +19,7 @@ CHECKPOINT_ROOT="${AIGC_CHECKPOINT_ROOT:-${STORAGE_ROOT}/checkpoints}"
 OUTPUT_ROOT="${AIGC_OUTPUT_ROOT:-${STORAGE_ROOT}/outputs}"
 MANIFEST="${AIGC_MANIFEST:-${DATA_ROOT}/manifests/aigc_mixed_all.csv}"
 MODEL_CONFIG="${AIGC_CONFIG:-configs/dinov3_forensic.toml}"
-EPOCHS_THIS_JOB="${AIGC_EPOCHS_THIS_JOB:-4}"
+EPOCHS_THIS_JOB="${AIGC_EPOCHS_THIS_JOB:-2}"
 RESUME="${AIGC_RESUME:-}"
 CONTAINER_VENV="${CACHE_ROOT}/venvs/pytorch-2.4-cu121"
 IMAGE="docker://pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime"

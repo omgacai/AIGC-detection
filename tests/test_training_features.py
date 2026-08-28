@@ -1,7 +1,7 @@
 import torch
 
 from robust_aigc.utils.ema import TrainableParameterEMA
-from scripts.train import job_stop_epoch, smooth_binary_targets
+from scripts.train import job_stop_epoch, optimizer_parameter_groups, smooth_binary_targets
 
 
 def test_binary_label_smoothing_moves_targets_toward_half():
@@ -27,3 +27,13 @@ def test_ema_tracks_only_trainable_parameters_and_can_be_applied():
 def test_epoch_chunk_preserves_global_schedule_position():
     assert job_stop_epoch(start=8, total=30, epochs_this_job=4) == 12
     assert job_stop_epoch(start=28, total=30, epochs_this_job=4) == 30
+
+
+def test_optimizer_uses_lower_learning_rate_for_trainable_backbone():
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.backbone = torch.nn.Linear(2, 2)
+            self.head = torch.nn.Linear(2, 1)
+    groups = optimizer_parameter_groups(Model(), {"optimizer": {"learning_rate": 2e-4, "backbone_learning_rate": 1e-5}})
+    assert [group["lr"] for group in groups] == [2e-4, 1e-5]

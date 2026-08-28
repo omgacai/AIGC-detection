@@ -68,6 +68,22 @@ def balanced_sample_weights(records, balance_classes: bool, balance_datasets: bo
     return [1.0 / counts[group(record)] for record in records]
 
 
+def optimizer_parameter_groups(model, config: dict) -> list[dict]:
+    """Use a conservative LR for fine-tuned DINO blocks and normal LR for heads."""
+    optimizer_config = config["optimizer"]
+    head, backbone = [], []
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        (backbone if name.startswith("backbone.") else head).append(parameter)
+    if not head:
+        raise ValueError("No trainable forensic-head parameters found")
+    groups = [{"params": head, "lr": optimizer_config["learning_rate"]}]
+    if backbone:
+        groups.append({"params": backbone, "lr": optimizer_config.get("backbone_learning_rate", optimizer_config["learning_rate"] * 0.05)})
+    return groups
+
+
 def build_loader(records, image_size, augmentation, batch_size, workers, balance_classes=False, balance_datasets=False, normalization_mean=(0.485, 0.456, 0.406), normalization_std=(0.229, 0.224, 0.225)):
     dataset = PairedAIGCImageDataset(records, image_size, augmentation, normalization_mean, normalization_std)
     weights = balanced_sample_weights(records, balance_classes, balance_datasets)
@@ -81,7 +97,7 @@ def smooth_binary_targets(labels: torch.Tensor, smoothing: float) -> torch.Tenso
     return labels * (1.0 - smoothing) + 0.5 * smoothing
 
 
-def train_one_epoch(model, loader, optimizer, scaler, device, accumulation, lambda_consistency, clip_norm, label_smoothing, ema=None):
+def train_one_epoch(model, loader, optimizer, scaler, device, accumulation, lambda_consistency, clip_norm, label_smoothing, ema=None, logger=None, epoch=None, log_every_steps=0):
     model.train(); sums = Counter(); optimizer.zero_grad(set_to_none=True)
     for step, batch in enumerate(loader, 1):
         image, augmented, label = (batch["image"].to(device, non_blocking=True), batch["augmented_image"].to(device, non_blocking=True), batch["label"].to(device, non_blocking=True))
@@ -96,8 +112,17 @@ def train_one_epoch(model, loader, optimizer, scaler, device, accumulation, lamb
             scaler.unscale_(optimizer); torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
             scaler.step(optimizer); scaler.update(); optimizer.zero_grad(set_to_none=True)
             if ema is not None: ema.update(model)
-        size = label.numel(); sums.update({"count": size, "train_loss": loss.item() * size, "train_classification_loss": classification.item() * size, "train_consistency_loss": consistency.item() * size})
-    return {key: sums[key] / sums["count"] for key in ("train_loss", "train_classification_loss", "train_consistency_loss")}
+        size = label.numel()
+        batch_correct = ((torch.sigmoid(outputs["logits"]) >= 0.5) == label.bool()).sum().item()
+        sums.update({"count": size, "correct": batch_correct, "train_loss": loss.item() * size, "train_classification_loss": classification.item() * size, "train_consistency_loss": consistency.item() * size})
+        if logger is not None and log_every_steps and (step % log_every_steps == 0 or step == len(loader)):
+            logger.info(
+                "epoch=%d batch=%d/%d loss=%.6f batch_accuracy=%.4f running_accuracy=%.4f lr=%.8f",
+                epoch, step, len(loader), loss.item(), batch_correct / size, sums["correct"] / sums["count"], optimizer.param_groups[0]["lr"],
+            )
+    result = {key: sums[key] / sums["count"] for key in ("train_loss", "train_classification_loss", "train_consistency_loss")}
+    result["train_accuracy"] = sums["correct"] / sums["count"]
+    return result
 
 
 @torch.inference_mode()
@@ -132,7 +157,7 @@ def main():
     if device.type != "cuda": raise RuntimeError("Submit training through Slurm on a GPU node; CUDA is unavailable.")
     training, data = config["training"], config["data"]
     model = DINOv3Forensic(config).to(device)
-    optimizer = AdamW((p for p in model.parameters() if p.requires_grad), lr=config["optimizer"]["learning_rate"], weight_decay=config["optimizer"]["weight_decay"])
+    optimizer = AdamW(optimizer_parameter_groups(model, config), weight_decay=config["optimizer"]["weight_decay"])
     epochs, warmup = training["epochs"], config["scheduler"]["warmup_epochs"]
     if args.epochs is not None:
         if args.epochs < 1:
@@ -152,6 +177,8 @@ def main():
     ema = TrainableParameterEMA(model, config["optimizer"]["ema_decay"]) if config["optimizer"].get("ema_decay") is not None else None
     reporter = EpochReporter(output_root, run_directory, tensorboard=config["logging"]["tensorboard"])
     reporter.logger.info("run_directory=%s", run_directory)
+    fine_tuning_scope = "frozen" if model.backbone_frozen else (f"last_blocks={model.unfrozen_backbone_blocks}" if model.unfrozen_backbone_blocks else "full_backbone")
+    reporter.logger.info("fine_tuning scope=%s trainable_parameters=%d", fine_tuning_scope, sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad))
     checkpoints = None
     if checkpoint_config.get("enabled", True):
         tracked_metrics = checkpoint_config.get("tracked_metric_modes", {"tpr_at_1_fpr": "max", "fpr_at_99_tpr": "min"})
@@ -181,7 +208,7 @@ def main():
     for epoch in range(start, stop_epoch):
         stage = curriculum_stage(config["curriculum"], epoch); reporter.logger.info("epoch=%d curriculum=%s", epoch, stage["name"])
         train_loader = build_loader(train_records, data["image_size"], build_curriculum_augmentation(stage), training["batch_size"], training["num_workers"], data["balance_classes_per_batch"], data.get("balance_datasets", False), normalization_mean, normalization_std)
-        metrics = train_one_epoch(model, train_loader, optimizer, scaler, device, training["gradient_accumulation_steps"], config["loss"]["consistency_weight"], config["optimizer"]["gradient_clip_norm"], training["label_smoothing"], ema)
+        metrics = train_one_epoch(model, train_loader, optimizer, scaler, device, training["gradient_accumulation_steps"], config["loss"]["consistency_weight"], config["optimizer"]["gradient_clip_norm"], training["label_smoothing"], ema, reporter.logger, epoch, config["logging"].get("batch_log_every_steps", 0))
         if ema is not None:
             with ema.average_parameters(model):
                 metrics.update(validate(model, val_loader, device))

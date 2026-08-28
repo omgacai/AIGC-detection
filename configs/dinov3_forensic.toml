@@ -2,9 +2,9 @@
 # hyperparameters across shell commands or training code.
 
 [run]
-name = "dinov3_forensic_v1"
+name = "dinov3_vitb_full_titanv_v1"
 seed = 42
-notes = "DINOv3 ViT-L/16 with multi-scale forensic head and robustness curriculum"
+notes = "Fully fine-tuned DINOv3 ViT-B/16 on a 12 GB Titan V with multi-scale forensic head and robustness curriculum"
 
 [data]
 datasets = ["sid", "cifake", "wildfake"]
@@ -22,17 +22,19 @@ balance_classes_per_batch = true
 balance_datasets = true
 
 [model]
-backbone = "facebook/dinov3-vitl16-pretrain-lvd1689m"
-architecture = "dinov3_vit_l_16"
+backbone = "facebook/dinov3-vitb16-pretrain-lvd1689m"
+architecture = "dinov3_vit_b_16"
 parameter_budget = 2_000_000_000
 patch_size = 16
 tapped_layers = [8, 16, 24]
-freeze_backbone = true
+freeze_backbone = false
+# No unfreeze_last_blocks limit: fine-tune the complete DINOv3 ViT-L/16.
+gradient_checkpointing = true
 
 [forensic_head]
 local_aggregation_kernel = 3
 local_aggregation_padding = 1
-local_feature_dim = 768
+local_feature_dim = 512
 classifier_hidden_dim = 512
 classifier_dropout = 0.2
 projection_hidden_dim = 512
@@ -46,6 +48,7 @@ consistency_weight = 0.7
 [optimizer]
 name = "adamw"
 learning_rate = 2e-4
+backbone_learning_rate = 1e-5
 weight_decay = 0.05
 gradient_clip_norm = 1.0
 ema_decay = 0.999
@@ -57,10 +60,10 @@ min_learning_rate = 1e-6
 
 [training]
 epochs = 30
-batch_size = 4
-gradient_accumulation_steps = 16
+batch_size = 1
+gradient_accumulation_steps = 64
 effective_batch_size = 64
-num_workers = 4
+num_workers = 2
 mixed_precision = "fp16"
 label_smoothing = 0.05
 save_every_epoch = true
@@ -76,6 +79,9 @@ tensorboard = true
 jsonl = true
 csv = true
 console = true
+# Set to 1 for a live line after every training batch; increase it later if
+# the log becomes too noisy.
+batch_log_every_steps = 1
 
 [checkpointing]
 enabled = true

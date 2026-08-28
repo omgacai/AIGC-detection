@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 import torch
 from torch import nn
 from transformers import AutoModel
@@ -12,6 +13,10 @@ class DINOv3Forensic(nn.Module):
         super().__init__()
         model_cfg, head_cfg = config["model"], config["forensic_head"]
         self.backbone = AutoModel.from_pretrained(model_cfg["backbone"])
+        if model_cfg.get("gradient_checkpointing", False):
+            if not hasattr(self.backbone, "gradient_checkpointing_enable"):
+                raise RuntimeError("This backbone does not support gradient checkpointing")
+            self.backbone.gradient_checkpointing_enable()
         self.tapped_layers = tuple(model_cfg["tapped_layers"])
         self.num_register_tokens = int(getattr(self.backbone.config, "num_register_tokens", 0))
         hidden_size, local_dim = int(self.backbone.config.hidden_size), int(head_cfg["local_feature_dim"])
@@ -22,8 +27,39 @@ class DINOv3Forensic(nn.Module):
         self.classifier = nn.Sequential(nn.Linear(fused_dim, head_cfg["classifier_hidden_dim"]), nn.GELU(), nn.Dropout(head_cfg["classifier_dropout"]), nn.Linear(head_cfg["classifier_hidden_dim"], 1))
         self.projector = nn.Sequential(nn.Linear(fused_dim, head_cfg["projection_hidden_dim"]), nn.GELU(), nn.Linear(head_cfg["projection_hidden_dim"], head_cfg["projection_output_dim"]))
         self.backbone_frozen = bool(model_cfg.get("freeze_backbone", False))
-        if self.backbone_frozen:
-            for parameter in self.backbone.parameters(): parameter.requires_grad = False
+        self.unfrozen_backbone_blocks: tuple[int, ...] = ()
+        requested_blocks = int(model_cfg.get("unfreeze_last_blocks", 0))
+        if requested_blocks:
+            if self.backbone_frozen:
+                raise ValueError("freeze_backbone and unfreeze_last_blocks cannot both be enabled")
+            self.unfrozen_backbone_blocks = self._unfreeze_last_blocks(requested_blocks)
+        elif self.backbone_frozen:
+            for parameter in self.backbone.parameters():
+                parameter.requires_grad = False
+
+    def _unfreeze_last_blocks(self, count: int) -> tuple[int, ...]:
+        """Fine-tune only the final transformer blocks, not the whole ViT."""
+        if count < 1:
+            raise ValueError("unfreeze_last_blocks must be positive")
+        for parameter in self.backbone.parameters():
+            parameter.requires_grad = False
+        blocks: dict[int, list[nn.Parameter]] = {}
+        pattern = re.compile(r"(?:encoder\.(?:layer|layers)|blocks)\.(\d+)\.")
+        for name, parameter in self.backbone.named_parameters():
+            match = pattern.search(name)
+            if match:
+                blocks.setdefault(int(match.group(1)), []).append(parameter)
+        if not blocks:
+            raise RuntimeError("Could not identify DINO transformer blocks for partial fine-tuning; refusing a silent frozen run.")
+        selected = tuple(sorted(blocks)[-count:])
+        for index in selected:
+            for parameter in blocks[index]:
+                parameter.requires_grad = True
+        # Train the final normalization with the final blocks when present.
+        for name, parameter in self.backbone.named_parameters():
+            if name.startswith(("layernorm", "norm")):
+                parameter.requires_grad = True
+        return selected
 
     def train(self, mode: bool = True):
         super().train(mode)
