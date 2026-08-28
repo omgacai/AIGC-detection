@@ -25,7 +25,7 @@ CHECKPOINT="${AIGC_CHECKPOINT:-${CHECKPOINT_ROOT}/google_vit_large_forensic_smok
 CONTAINER_VENV="${CACHE_ROOT}/venvs/pytorch-2.4-cu121"
 IMAGE="docker://pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime"
 
-for required in "${MANIFEST}" "${MODEL_CONFIG}" "${EVALUATION_CONFIG}" "${CHECKPOINT}" "${CONTAINER_VENV}/bin/python"; do
+for required in "${MANIFEST}" "${MODEL_CONFIG}" "${EVALUATION_CONFIG}" "${CHECKPOINT}"; do
   if [ ! -e "${required}" ]; then
     echo "ERROR: Required path not found: ${required}" >&2
     exit 2
@@ -53,6 +53,10 @@ echo "Split: ${EVALUATION_SPLIT}"
     export AIGC_CACHE_ROOT="'"${CACHE_ROOT}"'"
     export AIGC_CHECKPOINT_ROOT="'"${CHECKPOINT_ROOT}"'"
     export AIGC_OUTPUT_ROOT="'"${OUTPUT_ROOT}"'"
+    if [ ! -x "'"${CONTAINER_VENV}"'/bin/python" ]; then
+      echo "ERROR: Container virtual environment is unavailable: '"${CONTAINER_VENV}"'" >&2
+      exit 2
+    fi
     . "'"${CONTAINER_VENV}"'/bin/activate"
     python scripts/evaluate.py \
       --checkpoint "'"${CHECKPOINT}"'" \
