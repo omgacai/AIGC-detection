@@ -19,9 +19,10 @@ CACHE_ROOT="${AIGC_CACHE_ROOT:-${STORAGE_ROOT}/cache}"
 CHECKPOINT_ROOT="${AIGC_CHECKPOINT_ROOT:-${STORAGE_ROOT}/checkpoints}"
 OUTPUT_ROOT="${AIGC_OUTPUT_ROOT:-${STORAGE_ROOT}/outputs}"
 MANIFEST="${AIGC_MANIFEST:-${DATA_ROOT}/manifests/sid_all.csv}"
+PYTHON_DEPS="${CACHE_ROOT}/container-python-deps"
 IMAGE="docker://pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime"
 
-mkdir -p "${CACHE_ROOT}/apptainer" "${CACHE_ROOT}/huggingface" "${CHECKPOINT_ROOT}" "${OUTPUT_ROOT}"
+mkdir -p "${CACHE_ROOT}/apptainer" "${CACHE_ROOT}/huggingface" "${CACHE_ROOT}/pip" "${PYTHON_DEPS}" "${CHECKPOINT_ROOT}" "${OUTPUT_ROOT}"
 export APPTAINER_CACHEDIR="${CACHE_ROOT}/apptainer"
 
 if [ ! -f "${MANIFEST}" ]; then
@@ -38,7 +39,8 @@ echo "Manifest: ${MANIFEST}"
   "${IMAGE}" \
   bash -lc '
     set -eu
-    export PYTHONPATH=/workspace/src
+    export PYTHONPATH="'"${PYTHON_DEPS}"':/workspace/src${PYTHONPATH:+:$PYTHONPATH}"
+    export PIP_CACHE_DIR="'"${CACHE_ROOT}"'/pip"
     export HF_HOME="'"${CACHE_ROOT}"'/huggingface"
     export AIGC_DATA_ROOT="'"${DATA_ROOT}"'"
     export AIGC_CACHE_ROOT="'"${CACHE_ROOT}"'"
@@ -46,6 +48,9 @@ echo "Manifest: ${MANIFEST}"
     export AIGC_OUTPUT_ROOT="'"${OUTPUT_ROOT}"'"
     python --version
     python -c "import torch; print(\"torch=\", torch.__version__); print(\"gpu=\", torch.cuda.get_device_name(0))"
-    python -c "import transformers, albumentations, pandas, sklearn; print(\"Python dependencies available\")"
+    if ! python -c "import transformers, albumentations, sklearn, tensorboard"; then
+      python -m pip install --target "'"${PYTHON_DEPS}"'" --retries 20 --timeout 300 transformers albumentations scikit-learn tensorboard
+    fi
+    python -c "import transformers, albumentations, sklearn, tensorboard; print(\"Python dependencies available\")"
     python scripts/train.py --config configs/dinov3_forensic.toml --manifest "'"${MANIFEST}"'" --epochs 1
   '
