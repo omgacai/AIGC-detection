@@ -83,7 +83,9 @@ sbatch cluster/slurm_smoke_test.sh
 
 ## Future training outputs
 
-The training utilities are ready without introducing a model. Future `train.py` should write each epoch's loss/validation metrics through `EpochMetricsWriter`, which creates `metrics.jsonl` and `metrics.csv` under `$AIGC_OUTPUT_ROOT/<run-name>/`. `CheckpointManager` atomically updates `$AIGC_CHECKPOINT_ROOT/<run-name>/last.pt` each epoch and writes `best.pt` only when the configured internal-validation metric improves. This preserves a resumable state with model, optimizer, scheduler, epoch, metrics, and training arguments.
+The training utilities are ready without introducing a model. Future `train.py` should write each epoch's loss/validation metrics through `EpochMetricsWriter`, which creates `metrics.jsonl` and `metrics.csv` under `$AIGC_OUTPUT_ROOT/<run-name>/`. `binary_operating_point_metrics(labels, scores)` adds ROC-AUC, `tpr_at_1_fpr` (higher is better), and `fpr_at_99_tpr` (lower is better); scores must represent confidence in the AI-generated class.
+
+`CheckpointManager` atomically updates `$AIGC_CHECKPOINT_ROOT/<run-name>/last.pt` each epoch and writes `best.pt` when the configured internal-validation metric improves. It also overwrites `best_tpr_at_1_fpr.pt` only when TPR@1% FPR improves, and `best_fpr_at_99_tpr.pt` only when FPR@99% TPR decreases. This preserves resumable state with model, optimizer, scheduler, epoch, metrics, and training arguments.
 
 Never put needed checkpoints in `$SLURM_TMPDIR`; it is node-local temporary storage and can disappear after the Slurm job.
 

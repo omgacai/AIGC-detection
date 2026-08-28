@@ -6,6 +6,32 @@ import json
 from pathlib import Path
 from typing import Mapping
 
+import numpy as np
+from sklearn.metrics import roc_auc_score, roc_curve
+
+
+def binary_operating_point_metrics(labels, scores) -> dict[str, float]:
+    """Compute binary validation metrics for positive (AI-generated) scores.
+
+    Scores must increase with confidence that the image is AI-generated (label 1).
+    `tpr_at_1_fpr` is higher-is-better; `fpr_at_99_tpr` is lower-is-better.
+    Values are fractions rather than percent strings so CSV/JSONL stay numerical.
+    """
+    labels_array = np.asarray(labels, dtype=np.int64)
+    scores_array = np.asarray(scores, dtype=np.float64)
+    if labels_array.ndim != 1 or scores_array.ndim != 1 or len(labels_array) != len(scores_array):
+        raise ValueError("labels and scores must be one-dimensional arrays with equal length")
+    if len(labels_array) == 0 or set(np.unique(labels_array)) != {0, 1}:
+        raise ValueError("operating-point metrics require at least one real (0) and one AI (1) example")
+    fpr, tpr, _ = roc_curve(labels_array, scores_array, pos_label=1)
+    tpr_at_1_fpr = float(np.max(tpr[fpr <= 0.01]))
+    fpr_at_99_tpr = float(np.min(fpr[tpr >= 0.99]))
+    return {
+        "roc_auc": float(roc_auc_score(labels_array, scores_array)),
+        "tpr_at_1_fpr": tpr_at_1_fpr,
+        "fpr_at_99_tpr": fpr_at_99_tpr,
+    }
+
 
 class EpochMetricsWriter:
     """Append one machine-readable metrics record per epoch in JSONL and CSV."""

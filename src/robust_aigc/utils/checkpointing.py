@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import asdict, dataclass
+import re
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -21,20 +22,32 @@ class CheckpointManager:
     monitor: str = "internal_val_accuracy"
     mode: Mode = "max"
     best_value: float | None = None
+    tracked_metrics: dict[str, Mode] = field(default_factory=lambda: {
+        "tpr_at_1_fpr": "max",
+        "fpr_at_99_tpr": "min",
+    })
+    best_values: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.mode not in {"max", "min"}:
             raise ValueError("mode must be 'max' or 'min'")
+        if any(mode not in {"max", "min"} for mode in self.tracked_metrics.values()):
+            raise ValueError("tracked metric modes must be 'max' or 'min'")
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def run_dir(self) -> Path:
         return self.root / self.run_name
 
-    def _is_better(self, value: float) -> bool:
-        if self.best_value is None:
+    @staticmethod
+    def _is_better(value: float, best_value: float | None, mode: Mode) -> bool:
+        if best_value is None:
             return True
-        return value > self.best_value if self.mode == "max" else value < self.best_value
+        return value > best_value if mode == "max" else value < best_value
+
+    @staticmethod
+    def _safe_metric_name(metric: str) -> str:
+        return re.sub(r"[^A-Za-z0-9_.-]+", "_", metric)
 
     def _atomic_save(self, payload: dict[str, Any], destination: Path) -> None:
         temporary = destination.with_suffix(destination.suffix + ".tmp")
@@ -67,12 +80,23 @@ class CheckpointManager:
         }
         last_path = self.run_dir / "last.pt"
         self._atomic_save(payload, last_path)
-        is_best = self._is_better(monitor_value)
+        is_best = self._is_better(monitor_value, self.best_value, self.mode)
         if is_best:
             self.best_value = monitor_value
             payload["best_value"] = self.best_value
             self._atomic_save(payload, self.run_dir / "best.pt")
-        return {"last": last_path, "best": self.run_dir / "best.pt", "is_best": is_best}
+        updated_metrics: list[str] = []
+        for metric, metric_mode in self.tracked_metrics.items():
+            if metric not in metrics:
+                continue
+            value = float(metrics[metric])
+            if self._is_better(value, self.best_values.get(metric), metric_mode):
+                self.best_values[metric] = value
+                metric_payload = {**payload, "best_metric": metric, "best_value": value}
+                self._atomic_save(metric_payload, self.run_dir / f"best_{self._safe_metric_name(metric)}.pt")
+                updated_metrics.append(metric)
+        return {"last": last_path, "best": self.run_dir / "best.pt", "is_best": is_best,
+                "updated_best_metrics": updated_metrics}
 
     def write_metadata(self) -> Path:
         path = self.run_dir / "checkpoint_config.json"
