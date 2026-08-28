@@ -89,3 +89,48 @@ def build_blur_noise_augmentation(stage: dict[str, Any]):
     if not transforms:
         raise ValueError("blur_noise_single augmentation requires blur and/or noise settings")
     return A.Compose([A.OneOf(transforms, p=1.0)])
+
+
+def build_single_transform_augmentation(stage: dict[str, Any]):
+    """Sample exactly one configured real-world transform per paired view.
+
+    The optional ``transform_weights`` mapping controls selection frequency;
+    blur and noise can be oversampled because development evaluation found
+    them harder, while all listed transformations remain represented.
+    """
+    import albumentations as A
+    import cv2
+
+    weights = stage.get("transform_weights", {})
+    transforms = []
+
+    def add(transform, name: str) -> None:
+        transform.p = float(weights.get(name, 1.0))
+        transforms.append(transform)
+
+    qualities = stage.get("jpeg_quality", [])
+    if qualities:
+        low, high = min(qualities), max(qualities)
+        try: add(A.ImageCompression(quality_range=(low, high), p=1.0), "jpeg")
+        except TypeError: add(A.ImageCompression(quality_lower=low, quality_upper=high, p=1.0), "jpeg")
+    sigmas = stage.get("gaussian_blur_sigma", [])
+    if sigmas:
+        add(A.GaussianBlur(blur_limit=(3, 7), sigma_limit=(min(sigmas), max(sigmas)), p=1.0), "gaussian_blur")
+    scales = stage.get("resize_scale", [])
+    if scales:
+        low, high = min(scales), max(scales)
+        try: add(A.Downscale(scale_range=(low, high), interpolation_pair={"downscale": cv2.INTER_AREA, "upscale": cv2.INTER_LINEAR}, p=1.0), "resize")
+        except TypeError: add(A.Downscale(scale_min=low, scale_max=high, interpolation=cv2.INTER_AREA, p=1.0), "resize")
+    noise = stage.get("gaussian_noise_sigma", [])
+    if noise:
+        try: add(A.GaussNoise(std_range=(min(noise), max(noise)), p=1.0), "gaussian_noise")
+        except TypeError: add(A.GaussNoise(var_limit=((255 * min(noise)) ** 2, (255 * max(noise)) ** 2), p=1.0), "gaussian_noise")
+    jitter = max(stage.get("color_jitter_strength", [0.0]))
+    if jitter:
+        add(A.ColorJitter(brightness=jitter, contrast=jitter, saturation=jitter, hue=0.0, p=1.0), "color_jitter")
+    crop_fractions = stage.get("center_crop_fraction", [])
+    if crop_fractions:
+        add(A.Lambda(image=partial(_center_crop_fraction, fraction=min(crop_fractions)), p=1.0), "center_crop")
+    if not transforms:
+        raise ValueError("single_transform augmentation requires at least one configured transform")
+    return A.Compose([A.OneOf(transforms, p=1.0)])

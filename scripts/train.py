@@ -15,7 +15,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
-from robust_aigc.data.augmentations import build_blur_noise_augmentation, build_curriculum_augmentation
+from robust_aigc.data.augmentations import build_blur_noise_augmentation, build_curriculum_augmentation, build_single_transform_augmentation
 from robust_aigc.data.paired_dataset import PairedAIGCImageDataset
 from robust_aigc.data.registry import load_manifest
 from robust_aigc.models import DINOv3Forensic
@@ -244,7 +244,12 @@ def main():
     val_loader = build_loader(val_records, data["image_size"], None, training["batch_size"], training["num_workers"], normalization_mean=normalization_mean, normalization_std=normalization_std)
     for epoch in range(start, stop_epoch):
         stage = curriculum_stage(config["curriculum"], epoch); reporter.logger.info("epoch=%d curriculum=%s", epoch, stage["name"])
-        augmentation = build_blur_noise_augmentation(stage) if data.get("training_augmentation") == "blur_noise_single" else build_curriculum_augmentation(stage)
+        augmentation_mode = data.get("training_augmentation")
+        augmentation = (
+            build_single_transform_augmentation(stage) if augmentation_mode == "single_transform"
+            else build_blur_noise_augmentation(stage) if augmentation_mode == "blur_noise_single"
+            else build_curriculum_augmentation(stage)
+        )
         train_loader = build_loader(train_records, data["image_size"], augmentation, training["batch_size"], training["num_workers"], data["balance_classes_per_batch"], data.get("balance_datasets", False), normalization_mean, normalization_std)
         metrics = train_one_epoch(model, train_loader, optimizer, scaler, device, training["gradient_accumulation_steps"], config["loss"], config["optimizer"]["gradient_clip_norm"], training["label_smoothing"], ema, reporter.logger, epoch, config["logging"].get("batch_log_every_steps", 0))
         if ema is not None:

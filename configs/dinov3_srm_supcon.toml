@@ -1,10 +1,10 @@
-# Isolated robustness ablation: same SID split and ViT-B backbone as baseline,
-# with exactly one hard blur-or-noise view per image.
+# Combined robustness experiment: exactly one sampled real-world transform per
+# augmented view, with blur/noise sampled more often than already-robust cases.
 
 [run]
-name = "dinov3_vitb_srm_supcon_blur_noise_v1"
+name = "dinov3_vitb_srm_supcon_single_transform_v1"
 seed = 42
-notes = "Full DINOv3 ViT-B/16 fine-tuning with gated SRM residual adapter and transformation-aware SupCon on blur/noise views"
+notes = "Full DINOv3 ViT-B/16 fine-tuning with gated SRM residual adapter, transformation-aware SupCon, and one weighted real-world transform per view"
 
 [data]
 datasets = ["sid"]
@@ -20,7 +20,7 @@ organizer_demo_split = "organizer_demo"
 allow_organizer_demo_for_training = false
 balance_classes_per_batch = true
 balance_datasets = false
-training_augmentation = "blur_noise_single"
+training_augmentation = "single_transform"
 
 [model]
 backbone = "facebook/dinov3-vitb16-pretrain-lvd1689m"
@@ -106,18 +106,54 @@ fpr_at_99_tpr = "min"
 
 [curriculum.stage1]
 epochs = [0, 3]
-name = "blur_noise_easy"
+name = "single_transform_easy"
+jpeg_quality = [90]
 gaussian_blur_sigma = [0.5, 1.0]
+resize_scale = [0.5]
 gaussian_noise_sigma = [0.02, 0.05]
+center_crop_fraction = [0.8]
+color_jitter_strength = [0.1]
+
+[curriculum.stage1.transform_weights]
+jpeg = 0.10
+gaussian_blur = 0.25
+resize = 0.10
+gaussian_noise = 0.35
+color_jitter = 0.10
+center_crop = 0.10
 
 [curriculum.stage2]
 epochs = [4, 7]
-name = "blur_noise_medium"
+jpeg_quality = [70, 50]
+name = "single_transform_medium"
 gaussian_blur_sigma = [1.0, 2.0]
+resize_scale = [0.25, 0.5]
 gaussian_noise_sigma = [0.05, 0.10]
+center_crop_fraction = [0.8]
+color_jitter_strength = [0.2]
+
+[curriculum.stage2.transform_weights]
+jpeg = 0.10
+gaussian_blur = 0.25
+resize = 0.10
+gaussian_noise = 0.35
+color_jitter = 0.10
+center_crop = 0.10
 
 [curriculum.stage3]
 epochs = [8, 9]
-name = "blur_noise_hard"
-gaussian_blur_sigma = [2.0]
-gaussian_noise_sigma = [0.10]
+name = "single_transform_hard"
+jpeg_quality = [50, 30]
+gaussian_blur_sigma = [1.0, 2.0]
+resize_scale = [0.25]
+gaussian_noise_sigma = [0.05, 0.10]
+center_crop_fraction = [0.8]
+color_jitter_strength = [0.2]
+
+[curriculum.stage3.transform_weights]
+jpeg = 0.10
+gaussian_blur = 0.25
+resize = 0.10
+gaussian_noise = 0.35
+color_jitter = 0.10
+center_crop = 0.10
