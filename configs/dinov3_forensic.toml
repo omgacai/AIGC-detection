@@ -24,7 +24,7 @@ architecture = "dinov3_vit_l_16"
 parameter_budget = 2_000_000_000
 patch_size = 16
 tapped_layers = [8, 16, 24]
-freeze_backbone = false
+freeze_backbone = true
 
 [forensic_head]
 local_aggregation_kernel = 3
@@ -54,7 +54,9 @@ min_learning_rate = 1e-6
 
 [training]
 epochs = 30
-batch_size = 64
+batch_size = 4
+gradient_accumulation_steps = 16
+effective_batch_size = 64
 num_workers = 4
 mixed_precision = "fp16"
 label_smoothing = 0.05
