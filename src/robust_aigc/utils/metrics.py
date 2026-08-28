@@ -53,3 +53,24 @@ class EpochMetricsWriter:
                 writer.writeheader()
             writer.writerow(record)
         return record
+
+
+class TensorBoardMetricsWriter:
+    """Write per-epoch scalar metrics to TensorBoard event files."""
+
+    def __init__(self, output_root: str | Path, run_name: str):
+        try:
+            from torch.utils.tensorboard import SummaryWriter
+        except ImportError as error:
+            raise RuntimeError("TensorBoard is not installed. Run the project setup script.") from error
+        self.log_dir = Path(output_root) / run_name / "tensorboard"
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.writer = SummaryWriter(log_dir=str(self.log_dir))
+
+    def write(self, epoch: int, metrics: Mapping[str, float | int]) -> None:
+        for name, value in metrics.items():
+            self.writer.add_scalar(f"epoch/{name}", float(value), global_step=epoch)
+        self.writer.flush()
+
+    def close(self) -> None:
+        self.writer.close()

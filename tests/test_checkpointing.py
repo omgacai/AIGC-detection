@@ -1,7 +1,8 @@
 import torch
+import pytest
 
 from robust_aigc.utils.checkpointing import CheckpointManager
-from robust_aigc.utils.metrics import EpochMetricsWriter, binary_operating_point_metrics
+from robust_aigc.utils.metrics import EpochMetricsWriter, TensorBoardMetricsWriter, binary_operating_point_metrics
 
 
 def test_checkpoint_manager_keeps_best_and_last(tmp_path):
@@ -31,3 +32,11 @@ def test_operating_point_metrics_are_correctly_oriented():
     metrics = binary_operating_point_metrics([0, 0, 1, 1], [0.1, 0.2, 0.8, 0.9])
     assert metrics["tpr_at_1_fpr"] == 1.0
     assert metrics["fpr_at_99_tpr"] == 0.0
+
+
+def test_tensorboard_writer_creates_event_file(tmp_path):
+    pytest.importorskip("tensorboard")
+    writer = TensorBoardMetricsWriter(tmp_path / "outputs", "run-1")
+    writer.write(1, {"train_loss": 0.3})
+    writer.close()
+    assert list(writer.log_dir.glob("events.out.tfevents.*"))

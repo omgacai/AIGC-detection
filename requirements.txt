@@ -13,3 +13,4 @@ tqdm>=4.66
 matplotlib>=3.7
 opencv-python-headless>=4.9
 pytest>=8.0
+tensorboard>=2.16

@@ -89,6 +89,25 @@ The training utilities are ready without introducing a model. Future `train.py` 
 
 Never put needed checkpoints in `$SLURM_TMPDIR`; it is node-local temporary storage and can disappear after the Slurm job.
 
+## TensorBoard monitoring
+
+Future training code should also call `TensorBoardMetricsWriter($AIGC_OUTPUT_ROOT, run_name).write(epoch, metrics)` at the end of every epoch. This writes event files under `$AIGC_OUTPUT_ROOT/<run-name>/tensorboard/` alongside the CSV and JSONL records.
+
+On the cluster login node, start a local-only viewer after setting `AIGC_OUTPUT_ROOT`:
+
+```bash
+source "$AIGC_VENV_DIR/bin/activate"
+tensorboard --logdir "$AIGC_OUTPUT_ROOT" --host 127.0.0.1 --port 6006
+```
+
+From your Mac, make a separate SSH tunnel (leave it running):
+
+```bash
+ssh -N -L 6006:127.0.0.1:6006 sookmun@xlogin.comp.nus.edu.sg
+```
+
+Then open [TensorBoard](http://localhost:6006). Stop either command with `Ctrl+C` when finished. Do not bind TensorBoard to `0.0.0.0` or expose it publicly.
+
 ## Status boundary
 
 Stop after one real dataset is downloaded, manifest-backed, verified, previewed, and produces a DataLoader batch; then validate DINOv3 on GPU. Robust transforms, paired learning, feature losses, model training, and tuning are intentionally deferred to Phase 1.
