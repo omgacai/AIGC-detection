@@ -29,6 +29,14 @@ def test_isolated_robustness_ablation_configs_are_valid():
     assert architecture_config["loss"]["supcon_weight"] == 0
 
 
+def test_mixed_full_finetune_config_balances_sources_and_rejects_organizer_data():
+    root = Path(__file__).resolve().parents[1]
+    config = load_toml(root / "configs" / "dinov3_srm_supcon_mixed.toml")
+    assert config["data"]["datasets"] == ["sid", "cifake", "wildfake"]
+    assert config["data"]["balance_datasets"] is True
+    assert config["model"]["freeze_backbone"] is False
+
+
 def test_evaluation_toml_loads_without_training_schema_validation():
     root = Path(__file__).resolve().parents[1]
     config = load_toml(root / "configs" / "evaluation.toml", validate_experiment=False)

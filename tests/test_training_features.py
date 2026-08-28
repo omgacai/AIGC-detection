@@ -1,6 +1,7 @@
 import torch
 
 from robust_aigc.utils.ema import TrainableParameterEMA
+from scripts.probe_dinov3_layers import parse_layers, pooled_patch_features
 from scripts.train import binary_js_divergence, job_stop_epoch, optimizer_parameter_groups, smooth_binary_targets, supervised_contrastive_loss
 
 
@@ -52,3 +53,12 @@ def test_supervised_contrastive_uses_clean_augmented_and_class_positives():
     loss = supervised_contrastive_loss(clean, augmented, labels, temperature=0.1)
     assert torch.isfinite(loss)
     assert loss >= 0
+
+
+def test_layer_probe_selects_blocks_and_mean_pools_patch_tokens():
+    assert parse_layers("all", 3) == (1, 2, 3)
+    assert parse_layers("1,3", 3) == (1, 3)
+    hidden = torch.ones(2, 6, 4)  # CLS + one register + four patch tokens
+    pooled = pooled_patch_features(hidden, num_register_tokens=1)
+    assert tuple(pooled.shape) == (2, 4)
+    assert torch.allclose(pooled.norm(dim=1), torch.ones(2))
