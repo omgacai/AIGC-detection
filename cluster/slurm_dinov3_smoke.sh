@@ -19,6 +19,7 @@ CACHE_ROOT="${AIGC_CACHE_ROOT:-${STORAGE_ROOT}/cache}"
 CHECKPOINT_ROOT="${AIGC_CHECKPOINT_ROOT:-${STORAGE_ROOT}/checkpoints}"
 OUTPUT_ROOT="${AIGC_OUTPUT_ROOT:-${STORAGE_ROOT}/outputs}"
 MANIFEST="${AIGC_MANIFEST:-${DATA_ROOT}/manifests/sid_all.csv}"
+MODEL_CONFIG="${AIGC_CONFIG:-configs/dinov3_forensic.toml}"
 CONTAINER_VENV="${CACHE_ROOT}/venvs/pytorch-2.4-cu121"
 IMAGE="docker://pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime"
 
@@ -33,6 +34,7 @@ fi
 
 echo "Host: $(hostname)"
 echo "Manifest: ${MANIFEST}"
+echo "Config: ${MODEL_CONFIG}"
 /usr/bin/apptainer exec --nv \
   --bind "${REPO_ROOT}:/workspace:ro,${STORAGE_ROOT}:${STORAGE_ROOT}" \
   --pwd /workspace \
@@ -56,5 +58,5 @@ echo "Manifest: ${MANIFEST}"
       python -m pip install --upgrade --retries 20 --timeout 300 "transformers==4.56.2" albumentations scikit-learn tensorboard
     fi
     python -c "import transformers, albumentations, sklearn, tensorboard; print(\"Python dependencies available\")"
-    python scripts/train.py --config configs/dinov3_forensic.toml --manifest "'"${MANIFEST}"'" --epochs 1
+    python scripts/train.py --config "'"${MODEL_CONFIG}"'" --manifest "'"${MANIFEST}"'" --epochs 1
   '

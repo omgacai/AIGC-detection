@@ -21,9 +21,9 @@ from robust_aigc.utils.paths import configure_caches, resolve_paths
 
 
 @torch.inference_mode()
-def score_condition(model, records, condition, image_size, batch_size, workers, device):
+def score_condition(model, records, condition, image_size, batch_size, workers, device, normalization_mean, normalization_std):
     augmentation = build_evaluation_augmentation(condition["kind"], condition.get("value"))
-    dataset = PairedAIGCImageDataset(records, image_size, augmentation)
+    dataset = PairedAIGCImageDataset(records, image_size, augmentation, normalization_mean, normalization_std)
     loader = DataLoader(dataset, batch_size=batch_size, num_workers=workers, pin_memory=True, persistent_workers=workers > 0)
     labels, scores, paths = [], [], []
     for batch in loader:
@@ -65,11 +65,14 @@ def main() -> None:
     model = DINOv3Forensic(model_config).to(device)
     state = torch.load(args.checkpoint, map_location=device, weights_only=False)
     model.load_state_dict(state["model_state_dict"]); model.eval()
+    model_data = model_config["data"]
+    normalization_mean = model_data.get("normalization_mean", (0.485, 0.456, 0.406))
+    normalization_std = model_data.get("normalization_std", (0.229, 0.224, 0.225))
 
     summary = []
     for condition in evaluation_config["conditions"]:
         print(f"[INFO] Evaluating {condition['name']} on {len(records)} images")
-        image_paths, labels, scores = score_condition(model, records, condition, evaluation_config["image_size"], evaluation_config["batch_size"], evaluation_config["num_workers"], device)
+        image_paths, labels, scores = score_condition(model, records, condition, evaluation_config["image_size"], evaluation_config["batch_size"], evaluation_config["num_workers"], device, normalization_mean, normalization_std)
         metrics = binary_classification_metrics(labels, scores, evaluation_config["threshold"])
         summary.append({"condition": condition["name"], "split": split, "count": len(labels), **metrics})
         (output_root / f"predictions_{condition['name']}.json").write_text(json.dumps([{"image_path": path, "pred": float(score)} for path, score in zip(image_paths, scores)], indent=2), encoding="utf-8")

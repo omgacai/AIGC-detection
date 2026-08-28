@@ -31,8 +31,8 @@ def curriculum_stage(curriculum: dict, epoch: int) -> dict:
     raise ValueError(f"No curriculum stage covers epoch {epoch}")
 
 
-def build_loader(records, image_size, augmentation, batch_size, workers, balanced=False):
-    dataset = PairedAIGCImageDataset(records, image_size, augmentation)
+def build_loader(records, image_size, augmentation, batch_size, workers, balanced=False, normalization_mean=(0.485, 0.456, 0.406), normalization_std=(0.229, 0.224, 0.225)):
+    dataset = PairedAIGCImageDataset(records, image_size, augmentation, normalization_mean, normalization_std)
     sampler = None
     if balanced:
         counts = Counter(int(r["label"]) for r in records)
@@ -98,10 +98,12 @@ def main():
     start = 0
     if args.resume:
         state = torch.load(args.resume, map_location=device, weights_only=False); model.load_state_dict(state["model_state_dict"]); optimizer.load_state_dict(state["optimizer_state_dict"]); scheduler.load_state_dict(state["scheduler_state_dict"]); start = state["epoch"] + 1
-    val_loader = build_loader(val_records, data["image_size"], None, training["batch_size"], training["num_workers"])
+    normalization_mean = data.get("normalization_mean", (0.485, 0.456, 0.406))
+    normalization_std = data.get("normalization_std", (0.229, 0.224, 0.225))
+    val_loader = build_loader(val_records, data["image_size"], None, training["batch_size"], training["num_workers"], normalization_mean=normalization_mean, normalization_std=normalization_std)
     for epoch in range(start, epochs):
         stage = curriculum_stage(config["curriculum"], epoch); reporter.logger.info("epoch=%d curriculum=%s", epoch, stage["name"])
-        train_loader = build_loader(train_records, data["image_size"], build_curriculum_augmentation(stage), training["batch_size"], training["num_workers"], data["balance_classes_per_batch"])
+        train_loader = build_loader(train_records, data["image_size"], build_curriculum_augmentation(stage), training["batch_size"], training["num_workers"], data["balance_classes_per_batch"], normalization_mean, normalization_std)
         metrics = train_one_epoch(model, train_loader, optimizer, scaler, device, training["gradient_accumulation_steps"], config["loss"]["consistency_weight"], config["optimizer"]["gradient_clip_norm"])
         metrics.update(validate(model, val_loader, device)); metrics["learning_rate"] = optimizer.param_groups[0]["lr"]
         reporter.report(epoch, metrics); checkpoints.save_epoch(epoch=epoch, model=model, optimizer=optimizer, scheduler=scheduler, metrics=metrics, training_args={"config": config, "config_path": str(args.config)}); scheduler.step()

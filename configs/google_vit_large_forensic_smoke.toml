@@ -1,17 +1,15 @@
-# Canonical experiment definition. Copy this file for a new run; do not spread
-# hyperparameters across shell commands or training code.
-
+# Ungated substitute used only to validate the training pipeline while DINOv3 access is pending.
 [run]
-name = "dinov3_forensic_v1"
+name = "google_vit_large_forensic_smoke"
 seed = 42
-notes = "DINOv3 ViT-L/16 with multi-scale forensic head and robustness curriculum"
+notes = "Public Google ViT-L/16 drop-in smoke test for the DINOv3-Forensic pipeline"
 
 [data]
 datasets = ["sid"]
-manifest = "${AIGC_DATA_ROOT}/manifests/sid_all.csv"
+manifest = "${AIGC_DATA_ROOT}/manifests/sid_smoke_all.csv"
 image_size = 224
-normalization_mean = [0.485, 0.456, 0.406]
-normalization_std = [0.229, 0.224, 0.225]
+normalization_mean = [0.5, 0.5, 0.5]
+normalization_std = [0.5, 0.5, 0.5]
 positive_class = "ai_generated"
 train_splits = ["train"]
 validation_split = "internal_val"
@@ -21,8 +19,8 @@ allow_organizer_demo_for_training = false
 balance_classes_per_batch = true
 
 [model]
-backbone = "facebook/dinov3-vitl16-pretrain-lvd1689m"
-architecture = "dinov3_vit_l_16"
+backbone = "google/vit-large-patch16-224-in21k"
+architecture = "vit_large_patch16_224"
 parameter_budget = 2_000_000_000
 patch_size = 16
 tapped_layers = [8, 16, 24]
