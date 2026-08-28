@@ -26,7 +26,8 @@ backbone = "facebook/dinov3-vitb16-pretrain-lvd1689m"
 architecture = "dinov3_vit_b_16"
 parameter_budget = 2_000_000_000
 patch_size = 16
-tapped_layers = [8, 16, 24]
+# ViT-B has 12 blocks; these correspond to early/middle/final feature scales.
+tapped_layers = [4, 8, 12]
 freeze_backbone = false
 # No unfreeze_last_blocks limit: fine-tune the complete DINOv3 ViT-B/16.
 gradient_checkpointing = true

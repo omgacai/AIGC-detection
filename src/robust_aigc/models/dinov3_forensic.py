@@ -70,6 +70,11 @@ class DINOv3Forensic(nn.Module):
     def _encode(self, images: torch.Tensor) -> torch.Tensor:
         requires_grad = any(parameter.requires_grad for parameter in self.backbone.parameters())
         with torch.set_grad_enabled(requires_grad): outputs = self.backbone(pixel_values=images, output_hidden_states=True)
+        if max(self.tapped_layers) >= len(outputs.hidden_states):
+            raise ValueError(
+                f"Requested tapped layer {max(self.tapped_layers)}, but this backbone returned only "
+                f"{len(outputs.hidden_states) - 1} transformer blocks. Update model.tapped_layers."
+            )
         features = []
         for branch_index, layer_index in enumerate(self.tapped_layers):
             hidden = outputs.hidden_states[layer_index]
