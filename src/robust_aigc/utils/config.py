@@ -18,8 +18,8 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
     return value
 
 
-def load_toml(path: str | Path) -> dict[str, Any]:
-    """Load the versioned experiment source-of-truth configuration."""
+def load_toml(path: str | Path, *, validate_experiment: bool = True) -> dict[str, Any]:
+    """Load TOML, optionally enforcing the full training-experiment schema."""
     try:
         import tomllib
     except ModuleNotFoundError:  # Python 3.10
@@ -29,7 +29,8 @@ def load_toml(path: str | Path) -> dict[str, Any]:
         raise FileNotFoundError(f"Experiment configuration not found: {config_path}")
     with config_path.open("rb") as handle:
         value = tomllib.load(handle)
-    validate_experiment_config(value)
+    if validate_experiment:
+        validate_experiment_config(value)
     return value
 
 

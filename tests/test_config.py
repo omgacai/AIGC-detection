@@ -12,6 +12,12 @@ def test_dinov3_forensic_config_is_valid():
     assert config["data"]["allow_organizer_demo_for_training"] is False
 
 
+def test_evaluation_toml_loads_without_training_schema_validation():
+    root = Path(__file__).resolve().parents[1]
+    config = load_toml(root / "configs" / "evaluation.toml", validate_experiment=False)
+    assert config["evaluation"]["conditions"][0]["kind"] == "clean"
+
+
 def test_config_rejects_organizer_demo_training():
     config = {section: {} for section in ("run", "data", "model", "forensic_head", "loss", "optimizer", "scheduler", "training", "metrics", "logging", "curriculum")}
     config["data"] = {"allow_organizer_demo_for_training": True, "train_splits": ["train"]}

@@ -53,7 +53,8 @@ def main() -> None:
     parser.add_argument("--split", help="Defaults to evaluation.default_split; organizer_demo is evaluation-only.")
     args = parser.parse_args()
 
-    model_config, evaluation_config = load_toml(args.model_config), load_toml(args.evaluation_config)["evaluation"]
+    model_config = load_toml(args.model_config)
+    evaluation_config = load_toml(args.evaluation_config, validate_experiment=False)["evaluation"]
     paths_config = resolve_paths(create=True); configure_caches(paths_config)
     output_root = Path(os.environ.get("AIGC_OUTPUT_ROOT", paths_config.output_root)) / evaluation_config["name"]
     output_root.mkdir(parents=True, exist_ok=True)

@@ -12,67 +12,67 @@ error_examples_per_type = 20
 # hackathon demonstration set; it remains categorically excluded from training.
 default_split = "internal_val"
 
-[[conditions]]
+[[evaluation.conditions]]
 name = "clean"
 kind = "clean"
 
-[[conditions]]
+[[evaluation.conditions]]
 name = "jpeg_q90"
 kind = "jpeg"
 value = 90
-[[conditions]]
+[[evaluation.conditions]]
 name = "jpeg_q70"
 kind = "jpeg"
 value = 70
-[[conditions]]
+[[evaluation.conditions]]
 name = "jpeg_q50"
 kind = "jpeg"
 value = 50
-[[conditions]]
+[[evaluation.conditions]]
 name = "jpeg_q30"
 kind = "jpeg"
 value = 30
 
-[[conditions]]
+[[evaluation.conditions]]
 name = "blur_sigma_0_5"
 kind = "gaussian_blur"
 value = 0.5
-[[conditions]]
+[[evaluation.conditions]]
 name = "blur_sigma_1_0"
 kind = "gaussian_blur"
 value = 1.0
-[[conditions]]
+[[evaluation.conditions]]
 name = "blur_sigma_2_0"
 kind = "gaussian_blur"
 value = 2.0
 
-[[conditions]]
+[[evaluation.conditions]]
 name = "resize_0_5"
 kind = "resize"
 value = 0.5
-[[conditions]]
+[[evaluation.conditions]]
 name = "resize_0_25"
 kind = "resize"
 value = 0.25
 
-[[conditions]]
+[[evaluation.conditions]]
 name = "noise_sigma_0_02"
 kind = "gaussian_noise"
 value = 0.02
-[[conditions]]
+[[evaluation.conditions]]
 name = "noise_sigma_0_05"
 kind = "gaussian_noise"
 value = 0.05
-[[conditions]]
+[[evaluation.conditions]]
 name = "noise_sigma_0_10"
 kind = "gaussian_noise"
 value = 0.10
 
-[[conditions]]
+[[evaluation.conditions]]
 name = "color_jitter_0_20"
 kind = "color_jitter"
 value = 0.20
-[[conditions]]
+[[evaluation.conditions]]
 name = "center_crop_0_80"
 kind = "center_crop"
 value = 0.80
