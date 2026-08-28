@@ -28,7 +28,7 @@ parameter_budget = 2_000_000_000
 patch_size = 16
 tapped_layers = [8, 16, 24]
 freeze_backbone = false
-# No unfreeze_last_blocks limit: fine-tune the complete DINOv3 ViT-L/16.
+# No unfreeze_last_blocks limit: fine-tune the complete DINOv3 ViT-B/16.
 gradient_checkpointing = true
 
 [forensic_head]
