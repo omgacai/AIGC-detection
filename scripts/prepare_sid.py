@@ -117,15 +117,23 @@ def select_candidates(parquet_files: list[Path], pq: object, quotas: dict[int, i
     return selected
 
 
-def ensure_empty_destination(destination: Path) -> None:
+def prepare_destination(destination: Path, resume: bool = False) -> None:
     existing = [path for path in destination.rglob("*") if path.is_file()]
-    if existing:
+    if existing and not resume:
         raise FileExistsError(
             f"Refusing to mix a new SID sample with {len(existing)} existing file(s) in {destination}. "
-            "Choose a new --output-dir (recommended) or archive the old dataset first."
+            "Choose a new --output-dir (recommended), archive the old dataset, or use --resume for a full decode."
         )
     for class_name in ("real", "aigc"):
         (destination / class_name).mkdir(parents=True, exist_ok=True)
+
+
+def destination_for(destination_root: Path, parquet_name: str, group_index: int, row_index: int, image_id: object, raw_label: int) -> tuple[Path, int]:
+    binary = sid_binary_label(raw_label)
+    class_name = "aigc" if binary else "real"
+    stem = safe_stem(image_id, f"row_{row_index}")
+    filename = f"sid_{Path(parquet_name).stem}_{group_index}_{row_index}_{stem}.jpg"
+    return destination_root / class_name / filename, binary
 
 
 def decode_candidates(selected: list[Candidate], pq: object, destination_root: Path) -> list[dict]:
@@ -137,15 +145,28 @@ def decode_candidates(selected: list[Candidate], pq: object, destination_root: P
         table = pq.ParquetFile(parquet_name).read_row_group(group_index, columns=["image"])
         images = table.column("image").to_pylist()
         for row_index, candidate in sorted(rows.items()):
-            binary = sid_binary_label(candidate.raw_label)
-            class_name = "aigc" if binary else "real"
-            stem = safe_stem(candidate.image_id, f"row_{row_index}")
-            filename = f"sid_{Path(parquet_name).stem}_{group_index}_{row_index}_{stem}.jpg"
-            destination = destination_root / class_name / filename
+            destination, binary = destination_for(destination_root, parquet_name, group_index, row_index, candidate.image_id, candidate.raw_label)
             with Image.open(io.BytesIO(image_payload(images[row_index]))) as image:
                 image.convert("RGB").save(destination, format="JPEG", quality=95)
             records.append({"path": str(destination), "label": binary, "source_dataset": "sid", "generator": None, "split": "train"})
         print(f"[INFO] decoded {Path(parquet_name).name} row-group {group_index}", flush=True)
+    return records
+
+
+def decode_all(parquet_files: list[Path], pq: object, destination_root: Path) -> list[dict]:
+    """Decode every SID row; existing deterministic files are safely skipped on resume."""
+    records: list[dict] = []
+    for parquet_path in parquet_files:
+        reader = pq.ParquetFile(parquet_path)
+        for group_index in range(reader.num_row_groups):
+            table = reader.read_row_group(group_index, columns=["img_id", "image", "label"])
+            for row_index, row in enumerate(table.to_pylist()):
+                destination, binary = destination_for(destination_root, str(parquet_path), group_index, row_index, row.get("img_id"), int(row["label"]))
+                if not destination.exists():
+                    with Image.open(io.BytesIO(image_payload(row["image"]))) as image:
+                        image.convert("RGB").save(destination, format="JPEG", quality=95)
+                records.append({"path": str(destination), "label": binary, "source_dataset": "sid", "generator": None, "split": "train"})
+            print(f"[INFO] decoded {parquet_path.name} row-group {group_index}", flush=True)
     return records
 
 
@@ -156,6 +177,8 @@ def main() -> None:
     parser.add_argument("--manifest-dir", type=Path, default=Path(os.environ.get("AIGC_DATA_ROOT", "data")) / "manifests")
     parser.add_argument("--manifest-name", default="sid_balanced")
     parser.add_argument("--max-per-class", type=int, default=10000, help="Number of real and AI images each; AI is balanced across SID's two AI sources.")
+    parser.add_argument("--decode-all", action="store_true", help="Decode every SID row into a separate directory; use --resume after a time-limited job ends.")
+    parser.add_argument("--resume", action="store_true", help="Skip existing deterministic files during --decode-all.")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
     try:
@@ -165,13 +188,19 @@ def main() -> None:
     parquet_files = sorted((args.source_dir / "data").glob("*.parquet"))
     if not parquet_files:
         raise FileNotFoundError(f"No SID Parquet files found in {args.source_dir / 'data'}")
-
-    raw_counts = count_raw_labels(parquet_files, pq)
-    quotas = raw_quotas(raw_counts, args.max_per_class)
-    print(f"[INFO] selecting across {len(parquet_files)} shards with raw quotas={quotas}", flush=True)
-    selected = select_candidates(parquet_files, pq, quotas, args.seed)
-    ensure_empty_destination(args.output_dir)
-    records = decode_candidates(selected, pq, args.output_dir)
+    if args.resume and not args.decode_all:
+        raise ValueError("--resume is only supported with --decode-all")
+    if args.decode_all:
+        print(f"[INFO] decoding every row across {len(parquet_files)} SID shards", flush=True)
+        prepare_destination(args.output_dir, resume=args.resume)
+        records = decode_all(parquet_files, pq, args.output_dir)
+    else:
+        raw_counts = count_raw_labels(parquet_files, pq)
+        quotas = raw_quotas(raw_counts, args.max_per_class)
+        print(f"[INFO] selecting across {len(parquet_files)} shards with raw quotas={quotas}", flush=True)
+        selected = select_candidates(parquet_files, pq, quotas, args.seed)
+        prepare_destination(args.output_dir)
+        records = decode_candidates(selected, pq, args.output_dir)
     records = assign_deterministic_splits(records, seed=args.seed)
     validate_split_isolation(records)
     args.manifest_dir.mkdir(parents=True, exist_ok=True)
