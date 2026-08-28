@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 import torch
@@ -22,6 +24,25 @@ from robust_aigc.utils.config import load_toml
 from robust_aigc.utils.metrics import EpochReporter, binary_operating_point_metrics
 from robust_aigc.utils.paths import configure_caches, resolve_paths
 from robust_aigc.utils.seed import set_seed
+
+
+def run_directory_name(config: dict, checkpoint_root: Path, output_root: Path, resume: Path | None) -> str:
+    """Create a non-overwriting run ID, or retain the original directory on resume."""
+    if resume is not None:
+        return resume.expanduser().resolve().parent.name
+    checkpoint_config = config.get("checkpointing", {})
+    template = checkpoint_config.get("run_directory_template", "{started_at}_{model}_{run_name}")
+    values = {
+        "started_at": datetime.now().astimezone().strftime("%Y%m%d-%H%M%S"),
+        "model": config["model"]["architecture"],
+        "run_name": config["run"]["name"],
+    }
+    base = re.sub(r"[^A-Za-z0-9_.-]+", "_", template.format(**values)).strip("._")
+    candidate, suffix = base, 2
+    while (checkpoint_root / candidate).exists() or (output_root / candidate).exists():
+        candidate = f"{base}-{suffix:02d}"
+        suffix += 1
+    return candidate
 
 
 def curriculum_stage(curriculum: dict, epoch: int) -> dict:
@@ -75,7 +96,11 @@ def main():
     parser = argparse.ArgumentParser(); parser.add_argument("--config", type=Path, default=Path("configs/dinov3_forensic.toml")); parser.add_argument("--manifest", type=Path); parser.add_argument("--resume", type=Path); parser.add_argument("--epochs", type=int, help="Optional cap for a smoke run; does not modify the TOML config.")
     args = parser.parse_args(); config = load_toml(args.config); set_seed(config["run"]["seed"])
     paths = resolve_paths(create=True); configure_caches(paths)
-    output_root = Path(os.environ.get("AIGC_OUTPUT_ROOT", paths.output_root)); checkpoint_root = Path(os.environ.get("AIGC_CHECKPOINT_ROOT", paths.checkpoint_root))
+    output_root = Path(os.environ.get("AIGC_OUTPUT_ROOT", paths.output_root))
+    checkpoint_config = config.get("checkpointing", {})
+    configured_checkpoint_root = os.path.expandvars(checkpoint_config.get("root", str(paths.checkpoint_root)))
+    checkpoint_root = Path(os.environ.get("AIGC_CHECKPOINT_ROOT", configured_checkpoint_root))
+    run_directory = run_directory_name(config, checkpoint_root, output_root, args.resume)
     manifest = args.manifest or Path(os.path.expandvars(config["data"]["manifest"])); records = load_manifest(manifest)
     train_records = [r for r in records if r["split"] in config["data"]["train_splits"]]
     val_records = [r for r in records if r["split"] == config["data"]["validation_split"]]
@@ -93,11 +118,29 @@ def main():
         epochs = min(epochs, args.epochs)
     scheduler = LambdaLR(optimizer, lambda e: min(1.0, (e + 1) / warmup) if e < warmup else 0.5 * (1 + torch.cos(torch.tensor(torch.pi * (e - warmup) / max(1, epochs - warmup))).item()))
     scaler = torch.amp.GradScaler("cuda")
-    reporter = EpochReporter(output_root, config["run"]["name"], tensorboard=config["logging"]["tensorboard"])
-    checkpoints = CheckpointManager(checkpoint_root, config["run"]["name"], monitor=config["metrics"]["primary_checkpoint_metric"], mode=config["metrics"]["primary_checkpoint_mode"])
+    reporter = EpochReporter(output_root, run_directory, tensorboard=config["logging"]["tensorboard"])
+    reporter.logger.info("run_directory=%s", run_directory)
+    checkpoints = None
+    if checkpoint_config.get("enabled", True):
+        tracked_metrics = checkpoint_config.get("tracked_metric_modes", {"tpr_at_1_fpr": "max", "fpr_at_99_tpr": "min"})
+        checkpoints = CheckpointManager(
+            checkpoint_root,
+            run_directory,
+            monitor=checkpoint_config.get("monitor", config["metrics"]["primary_checkpoint_metric"]),
+            mode=checkpoint_config.get("mode", config["metrics"]["primary_checkpoint_mode"]),
+            tracked_metrics=tracked_metrics,
+            save_last=checkpoint_config.get("save_last", True),
+            save_primary_best=checkpoint_config.get("save_primary_best", True),
+            include_optimizer_state=checkpoint_config.get("include_optimizer_state", True),
+            include_scheduler_state=checkpoint_config.get("include_scheduler_state", True),
+        )
+        checkpoints.write_metadata()
     start = 0
     if args.resume:
-        state = torch.load(args.resume, map_location=device, weights_only=False); model.load_state_dict(state["model_state_dict"]); optimizer.load_state_dict(state["optimizer_state_dict"]); scheduler.load_state_dict(state["scheduler_state_dict"]); start = state["epoch"] + 1
+        state = torch.load(args.resume, map_location=device, weights_only=False); model.load_state_dict(state["model_state_dict"])
+        if state.get("optimizer_state_dict") is not None: optimizer.load_state_dict(state["optimizer_state_dict"])
+        if state.get("scheduler_state_dict") is not None: scheduler.load_state_dict(state["scheduler_state_dict"])
+        start = state["epoch"] + 1
     normalization_mean = data.get("normalization_mean", (0.485, 0.456, 0.406))
     normalization_std = data.get("normalization_std", (0.229, 0.224, 0.225))
     val_loader = build_loader(val_records, data["image_size"], None, training["batch_size"], training["num_workers"], normalization_mean=normalization_mean, normalization_std=normalization_std)
@@ -106,7 +149,10 @@ def main():
         train_loader = build_loader(train_records, data["image_size"], build_curriculum_augmentation(stage), training["batch_size"], training["num_workers"], data["balance_classes_per_batch"], normalization_mean, normalization_std)
         metrics = train_one_epoch(model, train_loader, optimizer, scaler, device, training["gradient_accumulation_steps"], config["loss"]["consistency_weight"], config["optimizer"]["gradient_clip_norm"])
         metrics.update(validate(model, val_loader, device)); metrics["learning_rate"] = optimizer.param_groups[0]["lr"]
-        reporter.report(epoch, metrics); checkpoints.save_epoch(epoch=epoch, model=model, optimizer=optimizer, scheduler=scheduler, metrics=metrics, training_args={"config": config, "config_path": str(args.config)}); scheduler.step()
+        reporter.report(epoch, metrics)
+        if checkpoints:
+            checkpoints.save_epoch(epoch=epoch, model=model, optimizer=optimizer, scheduler=scheduler, metrics=metrics, training_args={"config": config, "config_path": str(args.config)})
+        scheduler.step()
     reporter.close()
 
 

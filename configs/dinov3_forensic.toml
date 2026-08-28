@@ -76,6 +76,21 @@ jsonl = true
 csv = true
 console = true
 
+[checkpointing]
+enabled = true
+root = "${AIGC_CHECKPOINT_ROOT}"
+run_directory_template = "{started_at}_{model}_{run_name}"
+monitor = "internal_val_accuracy"
+mode = "max"
+save_last = true
+save_primary_best = true
+include_optimizer_state = true
+include_scheduler_state = true
+
+[checkpointing.tracked_metric_modes]
+tpr_at_1_fpr = "max"
+fpr_at_99_tpr = "min"
+
 [curriculum.stage1]
 epochs = [0, 5]
 name = "easy"

@@ -27,6 +27,10 @@ class CheckpointManager:
         "fpr_at_99_tpr": "min",
     })
     best_values: dict[str, float] = field(default_factory=dict)
+    save_last: bool = True
+    save_primary_best: bool = True
+    include_optimizer_state: bool = True
+    include_scheduler_state: bool = True
 
     def __post_init__(self) -> None:
         if self.mode not in {"max", "min"}:
@@ -71,17 +75,18 @@ class CheckpointManager:
         payload = {
             "epoch": epoch,
             "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict() if optimizer else None,
-            "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
+            "optimizer_state_dict": optimizer.state_dict() if optimizer and self.include_optimizer_state else None,
+            "scheduler_state_dict": scheduler.state_dict() if scheduler and self.include_scheduler_state else None,
             "metrics": metrics,
             "monitor": self.monitor,
             "monitor_value": monitor_value,
             "training_args": training_args or {},
         }
         last_path = self.run_dir / "last.pt"
-        self._atomic_save(payload, last_path)
+        if self.save_last:
+            self._atomic_save(payload, last_path)
         is_best = self._is_better(monitor_value, self.best_value, self.mode)
-        if is_best:
+        if is_best and self.save_primary_best:
             self.best_value = monitor_value
             payload["best_value"] = self.best_value
             self._atomic_save(payload, self.run_dir / "best.pt")
@@ -95,7 +100,8 @@ class CheckpointManager:
                 metric_payload = {**payload, "best_metric": metric, "best_value": value}
                 self._atomic_save(metric_payload, self.run_dir / f"best_{self._safe_metric_name(metric)}.pt")
                 updated_metrics.append(metric)
-        return {"last": last_path, "best": self.run_dir / "best.pt", "is_best": is_best,
+        return {"last": last_path if self.save_last else False,
+                "best": self.run_dir / "best.pt" if self.save_primary_best else False, "is_best": is_best,
                 "updated_best_metrics": updated_metrics}
 
     def write_metadata(self) -> Path:

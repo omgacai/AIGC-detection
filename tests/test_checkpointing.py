@@ -21,6 +21,20 @@ def test_checkpoint_manager_keeps_best_and_last(tmp_path):
     assert torch.load(tmp_path / "checkpoints" / "run-1" / "best_fpr_at_99_tpr.pt", weights_only=False)["epoch"] == 1
 
 
+def test_checkpoint_policy_can_disable_last_and_optimizer_state(tmp_path):
+    model = torch.nn.Linear(2, 2)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    manager = CheckpointManager(
+        tmp_path / "checkpoints", "run-1", save_last=False,
+        include_optimizer_state=False, tracked_metrics={},
+    )
+    manager.save_epoch(epoch=1, model=model, optimizer=optimizer, scheduler=None,
+                       metrics={"internal_val_accuracy": 0.7})
+    assert not (tmp_path / "checkpoints" / "run-1" / "last.pt").exists()
+    best = torch.load(tmp_path / "checkpoints" / "run-1" / "best.pt", weights_only=False)
+    assert best["optimizer_state_dict"] is None
+
+
 def test_metrics_writer_appends_epoch_records(tmp_path):
     writer = EpochMetricsWriter(tmp_path / "outputs", "run-1")
     writer.write(1, {"train_loss": 0.3, "internal_val_accuracy": 0.8})
