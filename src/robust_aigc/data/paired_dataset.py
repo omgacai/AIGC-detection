@@ -11,8 +11,9 @@ class PairedAIGCImageDataset(Dataset):
     """Return a clean view and an independently augmented view of the same image."""
 
     def __init__(self, records: list[dict], image_size: int, augmentation=None,
-                 normalization_mean=(0.485, 0.456, 0.406), normalization_std=(0.229, 0.224, 0.225)):
-        if any(record.get("split") == "organizer_demo" for record in records):
+                 normalization_mean=(0.485, 0.456, 0.406), normalization_std=(0.229, 0.224, 0.225),
+                 for_training: bool = True):
+        if for_training and any(record.get("split") == "organizer_demo" for record in records):
             raise AssertionError("organizer_demo is evaluation-only and must never be used for training")
         self.records, self.image_size, self.augmentation = records, image_size, augmentation
         self.normalization_mean, self.normalization_std = tuple(normalization_mean), tuple(normalization_std)

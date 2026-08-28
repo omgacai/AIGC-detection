@@ -18,17 +18,19 @@ from robust_aigc.models import DINOv3Forensic
 from robust_aigc.utils.config import load_toml
 from robust_aigc.utils.metrics import binary_classification_metrics
 from robust_aigc.utils.paths import configure_caches, resolve_paths
+from robust_aigc.utils.seed import set_seed
 
 
 @torch.inference_mode()
 def score_condition(model, records, condition, image_size, batch_size, workers, device, normalization_mean, normalization_std):
     augmentation = build_evaluation_augmentation(condition["kind"], condition.get("value"))
-    dataset = PairedAIGCImageDataset(records, image_size, augmentation, normalization_mean, normalization_std)
+    dataset = PairedAIGCImageDataset(records, image_size, augmentation, normalization_mean, normalization_std, for_training=False)
     loader = DataLoader(dataset, batch_size=batch_size, num_workers=workers, pin_memory=True, persistent_workers=workers > 0)
     labels, scores, paths = [], [], []
     for batch in loader:
         images = (batch["augmented_image"] if augmentation else batch["image"]).to(device, non_blocking=True)
-        logits = model(images)["logits"]
+        with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=device.type == "cuda"):
+            logits = model(images)["logits"]
         labels.extend(batch["label"].int().tolist())
         scores.extend(torch.sigmoid(logits).float().cpu().tolist())
         paths.extend(batch["path"])
@@ -70,13 +72,20 @@ def main() -> None:
     normalization_std = model_data.get("normalization_std", (0.229, 0.224, 0.225))
 
     summary = []
-    for condition in evaluation_config["conditions"]:
+    for condition_index, condition in enumerate(evaluation_config["conditions"]):
+        set_seed(model_config["run"]["seed"] + condition_index)
         print(f"[INFO] Evaluating {condition['name']} on {len(records)} images")
         image_paths, labels, scores = score_condition(model, records, condition, evaluation_config["image_size"], evaluation_config["batch_size"], evaluation_config["num_workers"], device, normalization_mean, normalization_std)
         metrics = binary_classification_metrics(labels, scores, evaluation_config["threshold"])
         summary.append({"condition": condition["name"], "split": split, "count": len(labels), **metrics})
         (output_root / f"predictions_{condition['name']}.json").write_text(json.dumps([{"image_path": path, "pred": float(score)} for path, score in zip(image_paths, scores)], indent=2), encoding="utf-8")
         (output_root / f"errors_{condition['name']}.json").write_text(json.dumps(error_examples(image_paths, labels, scores, evaluation_config["threshold"], evaluation_config["error_examples_per_type"]), indent=2), encoding="utf-8")
+    clean = summary[0]
+    if clean["condition"] != "clean":
+        raise ValueError("The first evaluation condition must be clean so robustness deltas are well-defined")
+    for row in summary:
+        for metric in ("accuracy", "balanced_accuracy", "roc_auc", "tpr_at_1_fpr", "fpr_at_99_tpr"):
+            row[f"delta_{metric}_vs_clean"] = row[metric] - clean[metric]
     with (output_root / "robustness_summary.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(summary[0])); writer.writeheader(); writer.writerows(summary)
     (output_root / "robustness_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
