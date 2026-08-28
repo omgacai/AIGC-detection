@@ -54,6 +54,9 @@ def main() -> int:
         print("[WARNING] WildFake is not downloaded automatically: ModelScope access/layout must be verified first. See README, then register its extracted directory with inspect_dataset.py.")
         return 2
     print(f"[INFO] Download complete: {destination}")
+    if args.dataset == "sid":
+        print("[INFO] SID_Set is stored as Parquet shards. Run scripts/prepare_sid.py to decode a chosen image subset and create manifests.")
+        return 0
     if not args.no_manifest:
         records = assign_deterministic_splits(build_records_from_directory(destination, args.dataset))
         validate_split_isolation(records)

@@ -24,6 +24,19 @@ DATASETS = {
 }
 
 
+def sid_binary_label(raw_label: int) -> int:
+    """Map SID's three source categories to the detector's binary target.
+
+    The raw value is used only while preparing images and is not emitted to the
+    final manifest, so it cannot accidentally become a model feature.
+    """
+    if raw_label == 0:
+        return 0
+    if raw_label in {1, 2}:
+        return 1
+    raise ValueError(f"Unexpected SID label: {raw_label}; expected 0, 1, or 2")
+
+
 def _label_for_path(path: Path) -> tuple[int, str | None] | None:
     parts = [part.lower() for part in path.parts]
     for index, part in enumerate(parts):
