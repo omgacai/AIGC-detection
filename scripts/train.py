@@ -21,6 +21,7 @@ from robust_aigc.data.registry import load_manifest
 from robust_aigc.models import DINOv3Forensic
 from robust_aigc.utils.checkpointing import CheckpointManager
 from robust_aigc.utils.config import load_toml
+from robust_aigc.utils.ema import TrainableParameterEMA
 from robust_aigc.utils.metrics import EpochReporter, binary_operating_point_metrics
 from robust_aigc.utils.paths import configure_caches, resolve_paths
 from robust_aigc.utils.seed import set_seed
@@ -52,28 +53,49 @@ def curriculum_stage(curriculum: dict, epoch: int) -> dict:
     raise ValueError(f"No curriculum stage covers epoch {epoch}")
 
 
-def build_loader(records, image_size, augmentation, batch_size, workers, balanced=False, normalization_mean=(0.485, 0.456, 0.406), normalization_std=(0.229, 0.224, 0.225)):
+def job_stop_epoch(start: int, total: int, epochs_this_job: int | None) -> int:
+    return min(total, start + epochs_this_job) if epochs_this_job is not None else total
+
+
+def balanced_sample_weights(records, balance_classes: bool, balance_datasets: bool):
+    if not balance_classes and not balance_datasets:
+        return None
+    def group(record):
+        dataset = record["source_dataset"] if balance_datasets else "all"
+        label = int(record["label"]) if balance_classes else "all"
+        return dataset, label
+    counts = Counter(group(record) for record in records)
+    return [1.0 / counts[group(record)] for record in records]
+
+
+def build_loader(records, image_size, augmentation, batch_size, workers, balance_classes=False, balance_datasets=False, normalization_mean=(0.485, 0.456, 0.406), normalization_std=(0.229, 0.224, 0.225)):
     dataset = PairedAIGCImageDataset(records, image_size, augmentation, normalization_mean, normalization_std)
-    sampler = None
-    if balanced:
-        counts = Counter(int(r["label"]) for r in records)
-        sampler = WeightedRandomSampler([1 / counts[int(r["label"])] for r in records], len(records), replacement=True)
-    return DataLoader(dataset, batch_size=batch_size, shuffle=not balanced, sampler=sampler, num_workers=workers, pin_memory=True, persistent_workers=workers > 0)
+    weights = balanced_sample_weights(records, balance_classes, balance_datasets)
+    sampler = WeightedRandomSampler(weights, len(records), replacement=True) if weights is not None else None
+    return DataLoader(dataset, batch_size=batch_size, shuffle=sampler is None, sampler=sampler, num_workers=workers, pin_memory=True, persistent_workers=workers > 0)
 
 
-def train_one_epoch(model, loader, optimizer, scaler, device, accumulation, lambda_consistency, clip_norm):
+def smooth_binary_targets(labels: torch.Tensor, smoothing: float) -> torch.Tensor:
+    if not 0.0 <= smoothing < 1.0:
+        raise ValueError("label smoothing must be in [0, 1)")
+    return labels * (1.0 - smoothing) + 0.5 * smoothing
+
+
+def train_one_epoch(model, loader, optimizer, scaler, device, accumulation, lambda_consistency, clip_norm, label_smoothing, ema=None):
     model.train(); sums = Counter(); optimizer.zero_grad(set_to_none=True)
     for step, batch in enumerate(loader, 1):
         image, augmented, label = (batch["image"].to(device, non_blocking=True), batch["augmented_image"].to(device, non_blocking=True), batch["label"].to(device, non_blocking=True))
+        smoothed_label = smooth_binary_targets(label, label_smoothing)
         with torch.autocast("cuda", dtype=torch.float16):
             outputs = model(image, augmented)
-            classification = (F.binary_cross_entropy_with_logits(outputs["logits"], label) + F.binary_cross_entropy_with_logits(outputs["augmented_logits"], label)) / 2
+            classification = (F.binary_cross_entropy_with_logits(outputs["logits"], smoothed_label) + F.binary_cross_entropy_with_logits(outputs["augmented_logits"], smoothed_label)) / 2
             consistency = 1 - F.cosine_similarity(outputs["projection"], outputs["augmented_projection"], dim=1).mean()
             loss = classification + lambda_consistency * consistency
         scaler.scale(loss / accumulation).backward()
         if step % accumulation == 0 or step == len(loader):
             scaler.unscale_(optimizer); torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
             scaler.step(optimizer); scaler.update(); optimizer.zero_grad(set_to_none=True)
+            if ema is not None: ema.update(model)
         size = label.numel(); sums.update({"count": size, "train_loss": loss.item() * size, "train_classification_loss": classification.item() * size, "train_consistency_loss": consistency.item() * size})
     return {key: sums[key] / sums["count"] for key in ("train_loss", "train_classification_loss", "train_consistency_loss")}
 
@@ -93,7 +115,7 @@ def validate(model, loader, device):
 
 
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument("--config", type=Path, default=Path("configs/dinov3_forensic.toml")); parser.add_argument("--manifest", type=Path); parser.add_argument("--resume", type=Path); parser.add_argument("--epochs", type=int, help="Optional cap for a smoke run; does not modify the TOML config.")
+    parser = argparse.ArgumentParser(); parser.add_argument("--config", type=Path, default=Path("configs/dinov3_forensic.toml")); parser.add_argument("--manifest", type=Path); parser.add_argument("--resume", type=Path); parser.add_argument("--epochs", type=int, help="Optional absolute epoch cap for a smoke run."); parser.add_argument("--epochs-this-job", type=int, help="Run at most this many complete epochs, preserving the 30-epoch schedule when resumed.")
     args = parser.parse_args(); config = load_toml(args.config); set_seed(config["run"]["seed"])
     paths = resolve_paths(create=True); configure_caches(paths)
     output_root = Path(os.environ.get("AIGC_OUTPUT_ROOT", paths.output_root))
@@ -116,8 +138,18 @@ def main():
         if args.epochs < 1:
             raise ValueError("--epochs must be at least 1")
         epochs = min(epochs, args.epochs)
-    scheduler = LambdaLR(optimizer, lambda e: min(1.0, (e + 1) / warmup) if e < warmup else 0.5 * (1 + torch.cos(torch.tensor(torch.pi * (e - warmup) / max(1, epochs - warmup))).item()))
+    if args.epochs_this_job is not None and args.epochs_this_job < 1:
+        raise ValueError("--epochs-this-job must be at least 1")
+    minimum_ratio = config["scheduler"]["min_learning_rate"] / config["optimizer"]["learning_rate"]
+    def learning_rate_factor(epoch: int) -> float:
+        if epoch < warmup:
+            return min(1.0, (epoch + 1) / max(1, warmup))
+        progress = (epoch - warmup) / max(1, epochs - warmup - 1)
+        cosine = 0.5 * (1.0 + torch.cos(torch.tensor(torch.pi * progress)).item())
+        return minimum_ratio + (1.0 - minimum_ratio) * cosine
+    scheduler = LambdaLR(optimizer, learning_rate_factor)
     scaler = torch.amp.GradScaler("cuda")
+    ema = TrainableParameterEMA(model, config["optimizer"]["ema_decay"]) if config["optimizer"].get("ema_decay") is not None else None
     reporter = EpochReporter(output_root, run_directory, tensorboard=config["logging"]["tensorboard"])
     reporter.logger.info("run_directory=%s", run_directory)
     checkpoints = None
@@ -140,19 +172,29 @@ def main():
         state = torch.load(args.resume, map_location=device, weights_only=False); model.load_state_dict(state["model_state_dict"])
         if state.get("optimizer_state_dict") is not None: optimizer.load_state_dict(state["optimizer_state_dict"])
         if state.get("scheduler_state_dict") is not None: scheduler.load_state_dict(state["scheduler_state_dict"])
+        if ema is not None and state.get("ema_state_dict") is not None: ema.load_state_dict(state["ema_state_dict"], device)
         start = state["epoch"] + 1
+    stop_epoch = job_stop_epoch(start, epochs, args.epochs_this_job)
     normalization_mean = data.get("normalization_mean", (0.485, 0.456, 0.406))
     normalization_std = data.get("normalization_std", (0.229, 0.224, 0.225))
     val_loader = build_loader(val_records, data["image_size"], None, training["batch_size"], training["num_workers"], normalization_mean=normalization_mean, normalization_std=normalization_std)
-    for epoch in range(start, epochs):
+    for epoch in range(start, stop_epoch):
         stage = curriculum_stage(config["curriculum"], epoch); reporter.logger.info("epoch=%d curriculum=%s", epoch, stage["name"])
-        train_loader = build_loader(train_records, data["image_size"], build_curriculum_augmentation(stage), training["batch_size"], training["num_workers"], data["balance_classes_per_batch"], normalization_mean, normalization_std)
-        metrics = train_one_epoch(model, train_loader, optimizer, scaler, device, training["gradient_accumulation_steps"], config["loss"]["consistency_weight"], config["optimizer"]["gradient_clip_norm"])
-        metrics.update(validate(model, val_loader, device)); metrics["learning_rate"] = optimizer.param_groups[0]["lr"]
+        train_loader = build_loader(train_records, data["image_size"], build_curriculum_augmentation(stage), training["batch_size"], training["num_workers"], data["balance_classes_per_batch"], data.get("balance_datasets", False), normalization_mean, normalization_std)
+        metrics = train_one_epoch(model, train_loader, optimizer, scaler, device, training["gradient_accumulation_steps"], config["loss"]["consistency_weight"], config["optimizer"]["gradient_clip_norm"], training["label_smoothing"], ema)
+        if ema is not None:
+            with ema.average_parameters(model):
+                metrics.update(validate(model, val_loader, device))
+        else:
+            metrics.update(validate(model, val_loader, device))
+        metrics["learning_rate"] = optimizer.param_groups[0]["lr"]
         reporter.report(epoch, metrics)
         if checkpoints:
-            checkpoints.save_epoch(epoch=epoch, model=model, optimizer=optimizer, scheduler=scheduler, metrics=metrics, training_args={"config": config, "config_path": str(args.config)})
+            checkpoints.save_epoch(epoch=epoch, model=model, optimizer=optimizer, scheduler=scheduler, metrics=metrics, training_args={"config": config, "config_path": str(args.config)}, ema_state_dict=ema.state_dict() if ema is not None else None)
         scheduler.step()
+    reporter.logger.info("job_finished completed_epochs=%d next_epoch=%d total_epochs=%d", max(0, stop_epoch - start), stop_epoch, epochs)
+    if checkpoints and stop_epoch < epochs:
+        reporter.logger.info("resume_next_job=%s", checkpoints.run_dir / "last.pt")
     reporter.close()
 
 

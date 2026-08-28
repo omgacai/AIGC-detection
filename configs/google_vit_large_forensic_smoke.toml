@@ -17,6 +17,7 @@ test_split = "test"
 organizer_demo_split = "organizer_demo"
 allow_organizer_demo_for_training = false
 balance_classes_per_batch = true
+balance_datasets = false
 
 [model]
 backbone = "google/vit-large-patch16-224-in21k"

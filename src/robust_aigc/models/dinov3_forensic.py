@@ -21,8 +21,15 @@ class DINOv3Forensic(nn.Module):
         self.normalizer = nn.LayerNorm(fused_dim)
         self.classifier = nn.Sequential(nn.Linear(fused_dim, head_cfg["classifier_hidden_dim"]), nn.GELU(), nn.Dropout(head_cfg["classifier_dropout"]), nn.Linear(head_cfg["classifier_hidden_dim"], 1))
         self.projector = nn.Sequential(nn.Linear(fused_dim, head_cfg["projection_hidden_dim"]), nn.GELU(), nn.Linear(head_cfg["projection_hidden_dim"], head_cfg["projection_output_dim"]))
-        if model_cfg.get("freeze_backbone", False):
+        self.backbone_frozen = bool(model_cfg.get("freeze_backbone", False))
+        if self.backbone_frozen:
             for parameter in self.backbone.parameters(): parameter.requires_grad = False
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if self.backbone_frozen:
+            self.backbone.eval()
+        return self
 
     def _encode(self, images: torch.Tensor) -> torch.Tensor:
         requires_grad = any(parameter.requires_grad for parameter in self.backbone.parameters())

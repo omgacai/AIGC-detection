@@ -35,6 +35,20 @@ def test_checkpoint_policy_can_disable_last_and_optimizer_state(tmp_path):
     assert best["optimizer_state_dict"] is None
 
 
+def test_resumed_manager_restores_previous_best_values(tmp_path):
+    model = torch.nn.Linear(2, 2)
+    root = tmp_path / "checkpoints"
+    first = CheckpointManager(root, "run-1")
+    first.save_epoch(epoch=1, model=model, optimizer=None, scheduler=None,
+                     metrics={"internal_val_accuracy": 0.8, "tpr_at_1_fpr": 0.6, "fpr_at_99_tpr": 0.2})
+    resumed = CheckpointManager(root, "run-1")
+    result = resumed.save_epoch(epoch=2, model=model, optimizer=None, scheduler=None,
+                                metrics={"internal_val_accuracy": 0.7, "tpr_at_1_fpr": 0.5, "fpr_at_99_tpr": 0.3})
+    assert result["is_best"] is False
+    assert result["updated_best_metrics"] == []
+    assert torch.load(root / "run-1" / "best.pt", weights_only=False)["epoch"] == 1
+
+
 def test_metrics_writer_appends_epoch_records(tmp_path):
     writer = EpochMetricsWriter(tmp_path / "outputs", "run-1")
     writer.write(1, {"train_loss": 0.3, "internal_val_accuracy": 0.8})

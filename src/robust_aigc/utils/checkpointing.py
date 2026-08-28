@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -38,6 +39,11 @@ class CheckpointManager:
         if any(mode not in {"max", "min"} for mode in self.tracked_metrics.values()):
             raise ValueError("tracked metric modes must be 'max' or 'min'")
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        state_path = self.run_dir / "checkpoint_state.json"
+        if state_path.exists():
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.best_value = state.get("best_value")
+            self.best_values = {name: float(value) for name, value in state.get("best_values", {}).items()}
 
     @property
     def run_dir(self) -> Path:
@@ -67,6 +73,7 @@ class CheckpointManager:
         scheduler: Any | None,
         metrics: dict[str, float],
         training_args: dict[str, Any] | None = None,
+        ema_state_dict: dict[str, Any] | None = None,
     ) -> dict[str, Path | bool]:
         """Save resumable state each epoch and best state only on improvement."""
         if self.monitor not in metrics:
@@ -81,6 +88,7 @@ class CheckpointManager:
             "monitor": self.monitor,
             "monitor_value": monitor_value,
             "training_args": training_args or {},
+            "ema_state_dict": ema_state_dict,
         }
         last_path = self.run_dir / "last.pt"
         if self.save_last:
@@ -100,12 +108,19 @@ class CheckpointManager:
                 metric_payload = {**payload, "best_metric": metric, "best_value": value}
                 self._atomic_save(metric_payload, self.run_dir / f"best_{self._safe_metric_name(metric)}.pt")
                 updated_metrics.append(metric)
+        self._write_tracking_state()
         return {"last": last_path if self.save_last else False,
                 "best": self.run_dir / "best.pt" if self.save_primary_best else False, "is_best": is_best,
                 "updated_best_metrics": updated_metrics}
 
+    def _write_tracking_state(self) -> Path:
+        path = self.run_dir / "checkpoint_state.json"
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps({"best_value": self.best_value, "best_values": self.best_values}, indent=2) + "\n", encoding="utf-8")
+        os.replace(temporary, path)
+        return path
+
     def write_metadata(self) -> Path:
         path = self.run_dir / "checkpoint_config.json"
-        import json
         path.write_text(json.dumps(asdict(self), default=str, indent=2) + "\n", encoding="utf-8")
         return path

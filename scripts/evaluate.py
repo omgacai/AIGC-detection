@@ -68,6 +68,11 @@ def main() -> None:
     model = DINOv3Forensic(model_config).to(device)
     state = torch.load(args.checkpoint, map_location=device, weights_only=False)
     model.load_state_dict(state["model_state_dict"]); model.eval()
+    if state.get("ema_state_dict") is not None:
+        parameters = dict(model.named_parameters())
+        for name, value in state["ema_state_dict"]["shadow"].items():
+            if name in parameters:
+                parameters[name].data.copy_(value.to(device))
     model_data = model_config["data"]
     normalization_mean = model_data.get("normalization_mean", (0.485, 0.456, 0.406))
     normalization_std = model_data.get("normalization_std", (0.229, 0.224, 0.225))

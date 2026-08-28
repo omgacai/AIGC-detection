@@ -61,4 +61,7 @@ def build_curriculum_augmentation(stage: dict[str, Any]):
         except TypeError: transforms.append(A.GaussNoise(var_limit=((255 * min(noise)) ** 2, (255 * max(noise)) ** 2), p=1.0))
     jitter = max(stage.get("color_jitter_strength", [0.0]))
     if jitter: transforms.append(A.ColorJitter(brightness=jitter, contrast=jitter, saturation=jitter, hue=0.0, p=1.0))
+    crop_fractions = stage.get("center_crop_fraction", [])
+    if crop_fractions:
+        transforms.append(A.Lambda(image=partial(_center_crop_fraction, fraction=min(crop_fractions)), p=1.0))
     return A.Compose(transforms)
