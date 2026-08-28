@@ -48,8 +48,8 @@ echo "Manifest: ${MANIFEST}"
     export AIGC_OUTPUT_ROOT="'"${OUTPUT_ROOT}"'"
     python --version
     python -c "import torch; print(\"torch=\", torch.__version__); print(\"gpu=\", torch.cuda.get_device_name(0))"
-    if ! python -c "import transformers, albumentations, sklearn, tensorboard; assert transformers.__version__.startswith(\"4.\")"; then
-      python -m pip install --target "'"${PYTHON_DEPS}"'" --upgrade --retries 20 --timeout 300 "transformers>=4.56,<5.0" albumentations scikit-learn tensorboard
+    if ! python -c "import transformers, albumentations, sklearn, tensorboard; assert transformers.__version__ == \"4.56.2\""; then
+      python -m pip install --target "'"${PYTHON_DEPS}"'" --upgrade --retries 20 --timeout 300 "transformers==4.56.2" albumentations scikit-learn tensorboard
     fi
     python -c "import transformers, albumentations, sklearn, tensorboard; print(\"Python dependencies available\")"
     python scripts/train.py --config configs/dinov3_forensic.toml --manifest "'"${MANIFEST}"'" --epochs 1
