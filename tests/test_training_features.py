@@ -1,7 +1,7 @@
 import torch
 
 from robust_aigc.utils.ema import TrainableParameterEMA
-from scripts.train import job_stop_epoch, optimizer_parameter_groups, smooth_binary_targets
+from scripts.train import binary_js_divergence, job_stop_epoch, optimizer_parameter_groups, smooth_binary_targets, supervised_contrastive_loss
 
 
 def test_binary_label_smoothing_moves_targets_toward_half():
@@ -37,3 +37,18 @@ def test_optimizer_uses_lower_learning_rate_for_trainable_backbone():
             self.head = torch.nn.Linear(2, 1)
     groups = optimizer_parameter_groups(Model(), {"optimizer": {"learning_rate": 2e-4, "backbone_learning_rate": 1e-5}})
     assert [group["lr"] for group in groups] == [2e-4, 1e-5]
+
+
+def test_prediction_consistency_is_zero_for_equal_logits_and_positive_otherwise():
+    logits = torch.tensor([-2.0, 0.5, 3.0])
+    assert torch.allclose(binary_js_divergence(logits, logits), torch.tensor(0.0), atol=1e-6)
+    assert binary_js_divergence(logits, -logits) > 0
+
+
+def test_supervised_contrastive_uses_clean_augmented_and_class_positives():
+    clean = torch.tensor([[1.0, 0.0], [0.9, 0.1], [0.0, 1.0], [0.1, 0.9]])
+    augmented = clean.clone()
+    labels = torch.tensor([0.0, 0.0, 1.0, 1.0])
+    loss = supervised_contrastive_loss(clean, augmented, labels, temperature=0.1)
+    assert torch.isfinite(loss)
+    assert loss >= 0

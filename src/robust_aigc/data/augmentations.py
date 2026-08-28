@@ -65,3 +65,27 @@ def build_curriculum_augmentation(stage: dict[str, Any]):
     if crop_fractions:
         transforms.append(A.Lambda(image=partial(_center_crop_fraction, fraction=min(crop_fractions)), p=1.0))
     return A.Compose(transforms)
+
+
+def build_blur_noise_augmentation(stage: dict[str, Any]):
+    """Sample exactly one hard view: Gaussian blur *or* Gaussian noise.
+
+    Applying both transformations serially makes it impossible to attribute a
+    robustness change to either degradation.  This variant deliberately keeps
+    the paired-view objective focused on the two observed weak conditions.
+    """
+    import albumentations as A
+
+    transforms = []
+    sigmas = stage.get("gaussian_blur_sigma", [])
+    if sigmas:
+        transforms.append(A.GaussianBlur(blur_limit=(3, 7), sigma_limit=(min(sigmas), max(sigmas)), p=1.0))
+    noise = stage.get("gaussian_noise_sigma", [])
+    if noise:
+        try:
+            transforms.append(A.GaussNoise(std_range=(min(noise), max(noise)), p=1.0))
+        except TypeError:
+            transforms.append(A.GaussNoise(var_limit=((255 * min(noise)) ** 2, (255 * max(noise)) ** 2), p=1.0))
+    if not transforms:
+        raise ValueError("blur_noise_single augmentation requires blur and/or noise settings")
+    return A.Compose([A.OneOf(transforms, p=1.0)])

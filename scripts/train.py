@@ -15,7 +15,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
-from robust_aigc.data.augmentations import build_curriculum_augmentation
+from robust_aigc.data.augmentations import build_blur_noise_augmentation, build_curriculum_augmentation
 from robust_aigc.data.paired_dataset import PairedAIGCImageDataset
 from robust_aigc.data.registry import load_manifest
 from robust_aigc.models import DINOv3Forensic
@@ -97,7 +97,36 @@ def smooth_binary_targets(labels: torch.Tensor, smoothing: float) -> torch.Tenso
     return labels * (1.0 - smoothing) + 0.5 * smoothing
 
 
-def train_one_epoch(model, loader, optimizer, scaler, device, accumulation, lambda_consistency, clip_norm, label_smoothing, ema=None, logger=None, epoch=None, log_every_steps=0):
+def binary_js_divergence(first_logits: torch.Tensor, second_logits: torch.Tensor) -> torch.Tensor:
+    """Jensen-Shannon divergence between two Bernoulli predictions."""
+    first = torch.sigmoid(first_logits).clamp(1e-6, 1 - 1e-6)
+    second = torch.sigmoid(second_logits).clamp(1e-6, 1 - 1e-6)
+    midpoint = (first + second) / 2
+    def kl(probability, target):
+        return probability * torch.log(probability / target) + (1 - probability) * torch.log((1 - probability) / (1 - target))
+    return ((kl(first, midpoint) + kl(second, midpoint)) / 2).mean()
+
+
+def supervised_contrastive_loss(clean_projection: torch.Tensor, augmented_projection: torch.Tensor, labels: torch.Tensor, temperature: float) -> torch.Tensor:
+    """SupCon across the clean/augmented pair and same-class batch examples."""
+    if temperature <= 0:
+        raise ValueError("supcon_temperature must be positive")
+    features = F.normalize(torch.cat((clean_projection, augmented_projection), dim=0), dim=1)
+    targets = torch.cat((labels, labels), dim=0).long()
+    logits = features @ features.T / temperature
+    logits = logits - logits.max(dim=1, keepdim=True).values.detach()
+    self_mask = torch.eye(logits.shape[0], device=logits.device, dtype=torch.bool)
+    positive_mask = targets[:, None].eq(targets[None, :]) & ~self_mask
+    logits = logits.masked_fill(self_mask, float("-inf"))
+    log_probability = logits - torch.logsumexp(logits, dim=1, keepdim=True)
+    positive_count = positive_mask.sum(dim=1)
+    valid = positive_count > 0
+    if not valid.any():
+        return logits.new_zeros(())
+    return -(log_probability.masked_fill(~positive_mask, 0).sum(dim=1)[valid] / positive_count[valid]).mean()
+
+
+def train_one_epoch(model, loader, optimizer, scaler, device, accumulation, loss_config, clip_norm, label_smoothing, ema=None, logger=None, epoch=None, log_every_steps=0):
     model.train(); sums = Counter(); optimizer.zero_grad(set_to_none=True)
     for step, batch in enumerate(loader, 1):
         image, augmented, label = (batch["image"].to(device, non_blocking=True), batch["augmented_image"].to(device, non_blocking=True), batch["label"].to(device, non_blocking=True))
@@ -106,7 +135,11 @@ def train_one_epoch(model, loader, optimizer, scaler, device, accumulation, lamb
             outputs = model(image, augmented)
             classification = (F.binary_cross_entropy_with_logits(outputs["logits"], smoothed_label) + F.binary_cross_entropy_with_logits(outputs["augmented_logits"], smoothed_label)) / 2
             consistency = 1 - F.cosine_similarity(outputs["projection"], outputs["augmented_projection"], dim=1).mean()
-            loss = classification + lambda_consistency * consistency
+            prediction_consistency = binary_js_divergence(outputs["logits"], outputs["augmented_logits"])
+            supcon = supervised_contrastive_loss(outputs["projection"], outputs["augmented_projection"], label, float(loss_config.get("supcon_temperature", 0.1))) if loss_config.get("supcon_weight", 0.0) else classification.new_zeros(())
+            loss = (classification + float(loss_config.get("consistency_weight", 0.0)) * consistency
+                    + float(loss_config.get("prediction_consistency_weight", 0.0)) * prediction_consistency
+                    + float(loss_config.get("supcon_weight", 0.0)) * supcon)
         scaler.scale(loss / accumulation).backward()
         if step % accumulation == 0 or step == len(loader):
             scaler.unscale_(optimizer); torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
@@ -114,14 +147,18 @@ def train_one_epoch(model, loader, optimizer, scaler, device, accumulation, lamb
             if ema is not None: ema.update(model)
         size = label.numel()
         batch_correct = ((torch.sigmoid(outputs["logits"]) >= 0.5) == label.bool()).sum().item()
-        sums.update({"count": size, "correct": batch_correct, "train_loss": loss.item() * size, "train_classification_loss": classification.item() * size, "train_consistency_loss": consistency.item() * size})
+        sums.update({"count": size, "correct": batch_correct, "train_loss": loss.item() * size, "train_classification_loss": classification.item() * size, "train_consistency_loss": consistency.item() * size, "train_prediction_consistency_loss": prediction_consistency.item() * size, "train_supcon_loss": supcon.item() * size})
+        if "residual_gate" in outputs:
+            sums.update({"residual_gate_sum": outputs["residual_gate"].mean().item() * size})
         if logger is not None and log_every_steps and (step % log_every_steps == 0 or step == len(loader)):
             logger.info(
                 "epoch=%d batch=%d/%d loss=%.6f batch_accuracy=%.4f running_accuracy=%.4f lr=%.8f",
                 epoch, step, len(loader), loss.item(), batch_correct / size, sums["correct"] / sums["count"], optimizer.param_groups[0]["lr"],
             )
-    result = {key: sums[key] / sums["count"] for key in ("train_loss", "train_classification_loss", "train_consistency_loss")}
+    result = {key: sums[key] / sums["count"] for key in ("train_loss", "train_classification_loss", "train_consistency_loss", "train_prediction_consistency_loss", "train_supcon_loss")}
     result["train_accuracy"] = sums["correct"] / sums["count"]
+    if sums["residual_gate_sum"]:
+        result["residual_gate_mean"] = sums["residual_gate_sum"] / sums["count"]
     return result
 
 
@@ -207,8 +244,9 @@ def main():
     val_loader = build_loader(val_records, data["image_size"], None, training["batch_size"], training["num_workers"], normalization_mean=normalization_mean, normalization_std=normalization_std)
     for epoch in range(start, stop_epoch):
         stage = curriculum_stage(config["curriculum"], epoch); reporter.logger.info("epoch=%d curriculum=%s", epoch, stage["name"])
-        train_loader = build_loader(train_records, data["image_size"], build_curriculum_augmentation(stage), training["batch_size"], training["num_workers"], data["balance_classes_per_batch"], data.get("balance_datasets", False), normalization_mean, normalization_std)
-        metrics = train_one_epoch(model, train_loader, optimizer, scaler, device, training["gradient_accumulation_steps"], config["loss"]["consistency_weight"], config["optimizer"]["gradient_clip_norm"], training["label_smoothing"], ema, reporter.logger, epoch, config["logging"].get("batch_log_every_steps", 0))
+        augmentation = build_blur_noise_augmentation(stage) if data.get("training_augmentation") == "blur_noise_single" else build_curriculum_augmentation(stage)
+        train_loader = build_loader(train_records, data["image_size"], augmentation, training["batch_size"], training["num_workers"], data["balance_classes_per_batch"], data.get("balance_datasets", False), normalization_mean, normalization_std)
+        metrics = train_one_epoch(model, train_loader, optimizer, scaler, device, training["gradient_accumulation_steps"], config["loss"], config["optimizer"]["gradient_clip_norm"], training["label_smoothing"], ema, reporter.logger, epoch, config["logging"].get("batch_log_every_steps", 0))
         if ema is not None:
             with ema.average_parameters(model):
                 metrics.update(validate(model, val_loader, device))
