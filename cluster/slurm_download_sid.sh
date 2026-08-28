@@ -35,8 +35,8 @@ echo "Downloading SID to: ${DATA_ROOT}/sid"
     export AIGC_DATA_ROOT="'"${DATA_ROOT}"'"
     export AIGC_CACHE_ROOT="'"${CACHE_ROOT}"'"
     export HF_HOME="'"${CACHE_ROOT}"'/huggingface"
-    if ! python -c "import huggingface_hub, yaml"; then
-      python -m pip install --target "'"${PYTHON_DEPS}"'" --retries 20 --timeout 300 huggingface_hub pyyaml
+    if ! python -c "import huggingface_hub, yaml, sklearn"; then
+      python -m pip install --target "'"${PYTHON_DEPS}"'" --retries 20 --timeout 300 huggingface_hub pyyaml scikit-learn
     fi
     python scripts/download_datasets.py --dataset sid --output-dir "'"${DATA_ROOT}"'"
   '
