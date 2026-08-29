@@ -26,7 +26,7 @@ def score_condition(model, records, condition, image_size, batch_size, workers, 
     augmentation = build_evaluation_augmentation(condition["kind"], condition.get("value"))
     dataset = PairedAIGCImageDataset(records, image_size, augmentation, normalization_mean, normalization_std, for_training=False)
     loader = DataLoader(dataset, batch_size=batch_size, num_workers=workers, pin_memory=True, persistent_workers=workers > 0)
-    labels, scores, paths = [], [], []
+    labels, scores, paths, sources = [], [], [], []
     for batch in loader:
         images = (batch["augmented_image"] if augmentation else batch["image"]).to(device, non_blocking=True)
         with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=device.type == "cuda"):
@@ -34,7 +34,8 @@ def score_condition(model, records, condition, image_size, batch_size, workers, 
         labels.extend(batch["label"].int().tolist())
         scores.extend(torch.sigmoid(logits).float().cpu().tolist())
         paths.extend(batch["path"])
-    return paths, labels, scores
+        sources.extend(batch["source_dataset"])
+    return paths, labels, scores, sources
 
 
 def error_examples(paths, labels, scores, threshold, limit):
@@ -42,6 +43,20 @@ def error_examples(paths, labels, scores, threshold, limit):
     false_positives = sorted((row for row in rows if row["label"] == 0 and row["pred"] >= threshold), key=lambda row: row["pred"], reverse=True)
     false_negatives = sorted((row for row in rows if row["label"] == 1 and row["pred"] < threshold), key=lambda row: row["pred"])
     return {"false_positives": false_positives[:limit], "false_negatives": false_negatives[:limit]}
+
+
+def by_source_metrics(condition: str, split: str, labels: list[int], scores: list[float], sources: list[str], threshold: float) -> list[dict]:
+    """Report source-specific metrics without changing the overall summary."""
+    rows = []
+    for source in sorted(set(sources)):
+        indices = [index for index, value in enumerate(sources) if value == source]
+        source_labels = [labels[index] for index in indices]
+        source_scores = [scores[index] for index in indices]
+        if len(set(source_labels)) < 2:
+            print(f"[WARN] Skipping source={source!r}; condition={condition!r} has only one class", flush=True)
+            continue
+        rows.append({"condition": condition, "split": split, "source_dataset": source, "count": len(indices), **binary_classification_metrics(source_labels, source_scores, threshold)})
+    return rows
 
 
 def main() -> None:
@@ -77,13 +92,14 @@ def main() -> None:
     normalization_mean = model_data.get("normalization_mean", (0.485, 0.456, 0.406))
     normalization_std = model_data.get("normalization_std", (0.229, 0.224, 0.225))
 
-    summary = []
+    summary, source_summary = [], []
     for condition_index, condition in enumerate(evaluation_config["conditions"]):
         set_seed(model_config["run"]["seed"] + condition_index)
         print(f"[INFO] Evaluating {condition['name']} on {len(records)} images")
-        image_paths, labels, scores = score_condition(model, records, condition, evaluation_config["image_size"], evaluation_config["batch_size"], evaluation_config["num_workers"], device, normalization_mean, normalization_std)
+        image_paths, labels, scores, sources = score_condition(model, records, condition, evaluation_config["image_size"], evaluation_config["batch_size"], evaluation_config["num_workers"], device, normalization_mean, normalization_std)
         metrics = binary_classification_metrics(labels, scores, evaluation_config["threshold"])
         summary.append({"condition": condition["name"], "split": split, "count": len(labels), **metrics})
+        source_summary.extend(by_source_metrics(condition["name"], split, labels, scores, sources, evaluation_config["threshold"]))
         (output_root / f"predictions_{condition['name']}.json").write_text(json.dumps([{"image_path": path, "pred": float(score)} for path, score in zip(image_paths, scores)], indent=2), encoding="utf-8")
         (output_root / f"errors_{condition['name']}.json").write_text(json.dumps(error_examples(image_paths, labels, scores, evaluation_config["threshold"], evaluation_config["error_examples_per_type"]), indent=2), encoding="utf-8")
     clean = summary[0]
@@ -94,6 +110,9 @@ def main() -> None:
             row[f"delta_{metric}_vs_clean"] = row[metric] - clean[metric]
     with (output_root / "robustness_summary.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(summary[0])); writer.writeheader(); writer.writerows(summary)
+    if source_summary:
+        with (output_root / "robustness_by_source.csv").open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(source_summary[0])); writer.writeheader(); writer.writerows(source_summary)
     (output_root / "robustness_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(f"[INFO] Wrote clean/transformation comparison and prediction JSON files to {output_root}")
 

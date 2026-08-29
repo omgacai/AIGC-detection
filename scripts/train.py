@@ -27,10 +27,17 @@ from robust_aigc.utils.paths import configure_caches, resolve_paths
 from robust_aigc.utils.seed import set_seed
 
 
-def run_directory_name(config: dict, checkpoint_root: Path, output_root: Path, resume: Path | None) -> str:
+def run_directory_name(config: dict, checkpoint_root: Path, output_root: Path, resume: Path | None, requested_name: str | None = None) -> str:
     """Create a non-overwriting run ID, or retain the original directory on resume."""
     if resume is not None:
         return resume.expanduser().resolve().parent.name
+    if requested_name is not None:
+        candidate = re.sub(r"[^A-Za-z0-9_.-]+", "_", requested_name).strip("._")
+        if not candidate:
+            raise ValueError("--run-directory must contain at least one safe filename character")
+        if (checkpoint_root / candidate).exists() or (output_root / candidate).exists():
+            raise FileExistsError(f"Run directory already exists: {candidate}. Use --resume for that run.")
+        return candidate
     checkpoint_config = config.get("checkpointing", {})
     template = checkpoint_config.get("run_directory_template", "{started_at}_{model}_{run_name}")
     values = {
@@ -177,14 +184,14 @@ def validate(model, loader, device):
 
 
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument("--config", type=Path, default=Path("configs/dinov3_forensic.toml")); parser.add_argument("--manifest", type=Path); parser.add_argument("--resume", type=Path); parser.add_argument("--epochs", type=int, help="Optional absolute epoch cap for a smoke run."); parser.add_argument("--epochs-this-job", type=int, help="Run at most this many complete epochs, preserving the 30-epoch schedule when resumed.")
+    parser = argparse.ArgumentParser(); parser.add_argument("--config", type=Path, default=Path("configs/dinov3_forensic.toml")); parser.add_argument("--manifest", type=Path); parser.add_argument("--resume", type=Path); parser.add_argument("--run-directory", help="Explicit new run ID. Cannot overwrite an existing run; use --resume to continue one."); parser.add_argument("--epochs", type=int, help="Optional absolute epoch cap for a smoke run."); parser.add_argument("--epochs-this-job", type=int, help="Run at most this many complete epochs, preserving the 30-epoch schedule when resumed.")
     args = parser.parse_args(); config = load_toml(args.config); set_seed(config["run"]["seed"])
     paths = resolve_paths(create=True); configure_caches(paths)
     output_root = Path(os.environ.get("AIGC_OUTPUT_ROOT", paths.output_root))
     checkpoint_config = config.get("checkpointing", {})
     configured_checkpoint_root = os.path.expandvars(checkpoint_config.get("root", str(paths.checkpoint_root)))
     checkpoint_root = Path(os.environ.get("AIGC_CHECKPOINT_ROOT", configured_checkpoint_root))
-    run_directory = run_directory_name(config, checkpoint_root, output_root, args.resume)
+    run_directory = run_directory_name(config, checkpoint_root, output_root, args.resume, args.run_directory)
     manifest = args.manifest or Path(os.path.expandvars(config["data"]["manifest"])); records = load_manifest(manifest)
     train_records = [r for r in records if r["split"] in config["data"]["train_splits"]]
     val_records = [r for r in records if r["split"] == config["data"]["validation_split"]]

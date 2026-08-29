@@ -33,4 +33,13 @@ class PairedAIGCImageDataset(Dataset):
         with Image.open(record["path"]) as image:
             clean = np.asarray(image.convert("RGB"))
         augmented = self.augmentation(image=clean)["image"] if self.augmentation else clean.copy()
-        return {"image": self._to_tensor(clean, self.image_size, self.normalization_mean, self.normalization_std), "augmented_image": self._to_tensor(augmented, self.image_size, self.normalization_mean, self.normalization_std), "label": torch.tensor(int(record["label"]), dtype=torch.float32), "path": record["path"]}
+        return {
+            "image": self._to_tensor(clean, self.image_size, self.normalization_mean, self.normalization_std),
+            "augmented_image": self._to_tensor(augmented, self.image_size, self.normalization_mean, self.normalization_std),
+            "label": torch.tensor(int(record["label"]), dtype=torch.float32),
+            "path": record["path"],
+            # Metadata only: never passed into the model. It enables a
+            # source-wise robustness report without mixing source labels into
+            # image features or training targets.
+            "source_dataset": record.get("source_dataset", "unknown"),
+        }

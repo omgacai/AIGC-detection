@@ -21,6 +21,7 @@ MANIFEST="${AIGC_MANIFEST:-${DATA_ROOT}/manifests/aigc_mixed_all.csv}"
 MODEL_CONFIG="${AIGC_CONFIG:-configs/dinov3_forensic.toml}"
 EPOCHS_THIS_JOB="${AIGC_EPOCHS_THIS_JOB:-2}"
 RESUME="${AIGC_RESUME:-}"
+RUN_DIRECTORY="${AIGC_RUN_ID:-}"
 CONTAINER_VENV="${CACHE_ROOT}/venvs/pytorch-2.4-cu121"
 IMAGE="docker://pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime"
 for required in "${MANIFEST}" "${MODEL_CONFIG}"; do
@@ -47,6 +48,8 @@ export APPTAINER_CACHEDIR="${CACHE_ROOT}/apptainer"
     --epochs-this-job "'"${EPOCHS_THIS_JOB}"'"
   if [ -n "'"${RESUME}"'" ]; then
     set -- "$@" --resume "'"${RESUME}"'"
+  elif [ -n "'"${RUN_DIRECTORY}"'" ]; then
+    set -- "$@" --run-directory "'"${RUN_DIRECTORY}"'"
   fi
   python scripts/train.py "$@"
 '

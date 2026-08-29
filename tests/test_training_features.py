@@ -2,7 +2,7 @@ import torch
 
 from robust_aigc.utils.ema import TrainableParameterEMA
 from scripts.probe_dinov3_layers import build_probe_feature_sets, parse_layers, parse_seeds, pooled_patch_features
-from scripts.train import binary_js_divergence, job_stop_epoch, optimizer_parameter_groups, smooth_binary_targets, supervised_contrastive_loss
+from scripts.train import binary_js_divergence, job_stop_epoch, optimizer_parameter_groups, run_directory_name, smooth_binary_targets, supervised_contrastive_loss
 
 
 def test_binary_label_smoothing_moves_targets_toward_half():
@@ -71,3 +71,7 @@ def test_layer_probe_builds_the_three_required_ablation_representations():
     assert representations["L4_L8_L12_fusion"].shape == (2, 9)
     assert representations["all_layers_concat"].shape == (2, 36)
     assert parse_seeds("42, 1337") == (42, 1337)
+
+
+def test_explicit_run_directory_is_safe_and_non_overwriting(tmp_path):
+    assert run_directory_name({"run": {"name": "unused"}, "model": {"architecture": "unused"}}, tmp_path / "checkpoints", tmp_path / "outputs", None, "my full run") == "my_full_run"
