@@ -1,4 +1,6 @@
 from scripts.evaluate import by_source_metrics
+from scripts.prepare_reference_benchmark import records
+from robust_aigc.utils.config import load_toml
 from robust_aigc.utils.metrics import binary_classification_metrics
 
 
@@ -14,3 +16,15 @@ def test_by_source_metrics_keeps_sources_separate():
     rows = by_source_metrics("clean", "internal_val", [0, 1, 0, 1], [0.1, 0.9, 0.2, 0.8], ["sid", "sid", "cifake", "cifake"], 0.5)
     assert [row["source_dataset"] for row in rows] == ["cifake", "sid"]
     assert all(row["accuracy"] == 1.0 for row in rows)
+
+
+def test_reference_records_are_evaluation_only_and_do_not_mix_labels(tmp_path):
+    paths = [tmp_path / "one.jpg", tmp_path / "two.jpg"]
+    values = records(paths, 1, "competition_dalle_advanced", "dalle_advanced")
+    assert {row["split"] for row in values} == {"organizer_demo"}
+    assert {row["label"] for row in values} == {1}
+
+
+def test_reference_evaluation_is_clean_only():
+    config = load_toml("configs/evaluation_reference_clean.toml", validate_experiment=False)
+    assert [condition["name"] for condition in config["evaluation"]["conditions"]] == ["clean"]
