@@ -1,5 +1,6 @@
 from scripts.evaluate import by_source_metrics
 from scripts.prepare_reference_benchmark import records
+from cluster.competition_reference_archives import ARCHIVES
 from robust_aigc.utils.config import load_toml
 from robust_aigc.utils.metrics import binary_classification_metrics
 
@@ -28,3 +29,7 @@ def test_reference_records_are_evaluation_only_and_do_not_mix_labels(tmp_path):
 def test_reference_evaluation_is_clean_only():
     config = load_toml("configs/evaluation_reference_clean.toml", validate_experiment=False)
     assert [condition["name"] for condition in config["evaluation"]["conditions"]] == ["clean"]
+
+
+def test_only_official_reference_archives_are_listed():
+    assert ARCHIVES == ("Images/Real/Coco.zip", "Images/Diffusion_based/DALLE.zip")
