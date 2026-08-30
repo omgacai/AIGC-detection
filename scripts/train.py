@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import random
 import re
 from collections import Counter
 from datetime import datetime
@@ -13,7 +14,7 @@ import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
-from torch.utils.data import DataLoader, WeightedRandomSampler
+from torch.utils.data import DataLoader, Sampler, WeightedRandomSampler
 
 from robust_aigc.data.augmentations import build_blur_noise_augmentation, build_curriculum_augmentation, build_single_transform_augmentation
 from robust_aigc.data.paired_dataset import PairedAIGCImageDataset
@@ -75,6 +76,55 @@ def balanced_sample_weights(records, balance_classes: bool, balance_datasets: bo
     return [1.0 / counts[group(record)] for record in records]
 
 
+def hierarchical_epoch_indices(records, samples_per_epoch: int, seed: int) -> list[int]:
+    """Draw a source-balanced epoch, then balance labels available per source.
+
+    A source that only provides one label receives its normal source quota and
+    contributes that label only.  Individual pools are exhausted without
+    replacement before a new shuffled pass is started.
+    """
+    if samples_per_epoch < 1:
+        raise ValueError("samples_per_epoch must be at least 1")
+    pools: dict[str, dict[int, list[int]]] = {}
+    for index, record in enumerate(records):
+        pools.setdefault(record["source_dataset"], {}).setdefault(int(record["label"]), []).append(index)
+    if not pools:
+        raise ValueError("Cannot sample an empty record set")
+    rng = random.Random(seed)
+    sources = sorted(pools)
+    source_quotas = {source: samples_per_epoch // len(sources) for source in sources}
+    for source in rng.sample(sources, samples_per_epoch % len(sources)):
+        source_quotas[source] += 1
+
+    selected: list[int] = []
+    for source in sources:
+        labels = sorted(pools[source])
+        label_quotas = {label: source_quotas[source] // len(labels) for label in labels}
+        for label in rng.sample(labels, source_quotas[source] % len(labels)):
+            label_quotas[label] += 1
+        for label in labels:
+            pool, remaining = list(pools[source][label]), label_quotas[label]
+            while remaining:
+                shuffled = list(pool)
+                rng.shuffle(shuffled)
+                take = min(remaining, len(shuffled))
+                selected.extend(shuffled[:take])
+                remaining -= take
+    rng.shuffle(selected)
+    return selected
+
+
+class FixedIndexSampler(Sampler[int]):
+    def __init__(self, indices: list[int]):
+        self.indices = indices
+
+    def __iter__(self):
+        return iter(self.indices)
+
+    def __len__(self):
+        return len(self.indices)
+
+
 def optimizer_parameter_groups(model, config: dict) -> list[dict]:
     """Use a conservative LR for fine-tuned DINO blocks and normal LR for heads."""
     optimizer_config = config["optimizer"]
@@ -91,10 +141,13 @@ def optimizer_parameter_groups(model, config: dict) -> list[dict]:
     return groups
 
 
-def build_loader(records, image_size, augmentation, batch_size, workers, balance_classes=False, balance_datasets=False, normalization_mean=(0.485, 0.456, 0.406), normalization_std=(0.229, 0.224, 0.225), for_training=True):
+def build_loader(records, image_size, augmentation, batch_size, workers, balance_classes=False, balance_datasets=False, normalization_mean=(0.485, 0.456, 0.406), normalization_std=(0.229, 0.224, 0.225), for_training=True, samples_per_epoch=None, sampler_seed=42):
     dataset = PairedAIGCImageDataset(records, image_size, augmentation, normalization_mean, normalization_std, for_training=for_training)
-    weights = balanced_sample_weights(records, balance_classes, balance_datasets)
-    sampler = WeightedRandomSampler(weights, len(records), replacement=True) if weights is not None else None
+    if samples_per_epoch is not None:
+        sampler = FixedIndexSampler(hierarchical_epoch_indices(records, int(samples_per_epoch), sampler_seed))
+    else:
+        weights = balanced_sample_weights(records, balance_classes, balance_datasets)
+        sampler = WeightedRandomSampler(weights, len(records), replacement=True) if weights is not None else None
     return DataLoader(dataset, batch_size=batch_size, shuffle=sampler is None, sampler=sampler, num_workers=workers, pin_memory=True, persistent_workers=workers > 0)
 
 
@@ -283,7 +336,7 @@ def main():
             else build_blur_noise_augmentation(stage) if augmentation_mode == "blur_noise_single"
             else build_curriculum_augmentation(stage)
         )
-        train_loader = build_loader(train_records, data["image_size"], augmentation, training["batch_size"], training["num_workers"], data["balance_classes_per_batch"], data.get("balance_datasets", False), normalization_mean, normalization_std)
+        train_loader = build_loader(train_records, data["image_size"], augmentation, training["batch_size"], training["num_workers"], data["balance_classes_per_batch"], data.get("balance_datasets", False), normalization_mean, normalization_std, samples_per_epoch=training.get("samples_per_epoch"), sampler_seed=config["run"]["seed"] + epoch)
         metrics = train_one_epoch(model, train_loader, optimizer, scaler, device, training["gradient_accumulation_steps"], config["loss"], config["optimizer"]["gradient_clip_norm"], training["label_smoothing"], ema, reporter.logger, epoch, config["logging"].get("batch_log_every_steps", 0))
         if ema is not None:
             with ema.average_parameters(model):

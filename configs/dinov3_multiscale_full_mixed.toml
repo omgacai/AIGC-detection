@@ -70,6 +70,9 @@ epochs = 10
 batch_size = 64
 gradient_accumulation_steps = 1
 effective_batch_size = 64
+# A fresh, source/class-stratified subset is drawn every epoch.  Validation and
+# organiser-demo reference data remain complete and fixed.
+samples_per_epoch = 120000
 num_workers = 2
 mixed_precision = "fp16"
 label_smoothing = 0.05

@@ -2,7 +2,7 @@ import torch
 
 from robust_aigc.utils.ema import TrainableParameterEMA
 from scripts.probe_dinov3_layers import build_probe_feature_sets, parse_layers, parse_seeds, pooled_patch_features
-from scripts.train import binary_js_divergence, job_stop_epoch, optimizer_parameter_groups, run_directory_name, smooth_binary_targets, supervised_contrastive_loss
+from scripts.train import binary_js_divergence, hierarchical_epoch_indices, job_stop_epoch, optimizer_parameter_groups, run_directory_name, smooth_binary_targets, supervised_contrastive_loss
 
 
 def test_binary_label_smoothing_moves_targets_toward_half():
@@ -28,6 +28,21 @@ def test_ema_tracks_only_trainable_parameters_and_can_be_applied():
 def test_epoch_chunk_preserves_global_schedule_position():
     assert job_stop_epoch(start=8, total=30, epochs_this_job=4) == 12
     assert job_stop_epoch(start=28, total=30, epochs_this_job=4) == 30
+
+
+def test_hierarchical_epoch_sampler_balances_sources_then_available_labels():
+    records = [
+        *[{"source_dataset": "source_a", "label": 0} for _ in range(10)],
+        *[{"source_dataset": "source_a", "label": 1} for _ in range(10)],
+        *[{"source_dataset": "source_b", "label": 0} for _ in range(10)],
+    ]
+    indices = hierarchical_epoch_indices(records, samples_per_epoch=12, seed=42)
+    selected = [records[index] for index in indices]
+    assert len(indices) == 12
+    assert sum(row["source_dataset"] == "source_a" for row in selected) == 6
+    assert sum(row["source_dataset"] == "source_b" for row in selected) == 6
+    assert sum(row["source_dataset"] == "source_a" and row["label"] == 0 for row in selected) == 3
+    assert sum(row["source_dataset"] == "source_a" and row["label"] == 1 for row in selected) == 3
 
 
 def test_optimizer_uses_lower_learning_rate_for_trainable_backbone():
