@@ -13,7 +13,7 @@ STORAGE_ROOT="${HOME}/aigc-storage"
 MANIFEST_DIR="${AIGC_REFERENCE_MANIFEST_DIR:-${STORAGE_ROOT}/data/manifests}"
 REFERENCE_RAW_ROOT="${AIGC_REFERENCE_RAW_ROOT:-${STORAGE_ROOT}/data/competition_reference/raw}"
 # ModelsScope archives retain the archive-name directory after extraction.
-AIGC_COCO_ROOT="${AIGC_COCO_ROOT:-${REFERENCE_RAW_ROOT}/Images/Real/coco/coco/coco2017}"
+AIGC_COCO_ROOT="${AIGC_COCO_ROOT:-${REFERENCE_RAW_ROOT}/Images/Real/coco/coco/coco2017/val2017}"
 AIGC_DALLE_ROOT="${AIGC_DALLE_ROOT:-${REFERENCE_RAW_ROOT}/Images/Diffusion_based/DALLE/DALLE/Advanced/DALLE3/dalle3}"
 VENV="${AIGC_A100_VENV:-${STORAGE_ROOT}/cache/venvs/a100-cu121-py312}"
 : "${AIGC_COCO_ROOT:?Set AIGC_COCO_ROOT to the authorised COCO val2017 image directory}"
