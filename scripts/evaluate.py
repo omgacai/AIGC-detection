@@ -106,7 +106,15 @@ def main() -> None:
     if clean["condition"] != "clean":
         raise ValueError("The first evaluation condition must be clean so robustness deltas are well-defined")
     for row in summary:
-        for metric in ("accuracy", "balanced_accuracy", "roc_auc", "tpr_at_1_fpr", "fpr_at_99_tpr"):
+        for metric in (
+            "accuracy",
+            "balanced_accuracy",
+            "roc_auc",
+            "tpr_at_1_fpr",
+            "tpr_at_5_fpr",
+            "fpr_at_99_tpr",
+            "fpr_at_95_tpr",
+        ):
             row[f"delta_{metric}_vs_clean"] = row[metric] - clean[metric]
     with (output_root / "robustness_summary.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(summary[0])); writer.writeheader(); writer.writerows(summary)
