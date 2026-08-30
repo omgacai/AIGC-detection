@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from collections import defaultdict
+import warnings
+
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from torch.utils.data import Dataset
 from torchvision.transforms import functional as TF
 
@@ -17,6 +20,18 @@ class PairedAIGCImageDataset(Dataset):
             raise AssertionError("organizer_demo is evaluation-only and must never be used for training")
         self.records, self.image_size, self.augmentation = records, image_size, augmentation
         self.normalization_mean, self.normalization_std = tuple(normalization_mean), tuple(normalization_std)
+        self.for_training = for_training
+        # A training fallback preserves the sampler's source/class balance
+        # when an occasional archive contains a corrupt image. Evaluation is
+        # intentionally strict: a bad benchmark image must fail visibly, not
+        # silently change its measured population.
+        self.group_indices: dict[tuple[str, int], list[int]] = defaultdict(list)
+        self.group_positions: dict[int, int] = {}
+        for item_index, record in enumerate(records):
+            group = (record.get("source_dataset", "unknown"), int(record["label"]))
+            self.group_positions[item_index] = len(self.group_indices[group])
+            self.group_indices[group].append(item_index)
+        self.reported_bad_paths: set[str] = set()
 
     @staticmethod
     def _to_tensor(image: np.ndarray, image_size: int, mean, std) -> torch.Tensor:
@@ -28,10 +43,43 @@ class PairedAIGCImageDataset(Dataset):
     def __len__(self) -> int:
         return len(self.records)
 
+    def _read_clean_image(self, record: dict) -> np.ndarray:
+        with Image.open(record["path"]) as image:
+            return np.asarray(image.convert("RGB"))
+
+    def _replacement_indices(self, index: int):
+        record = self.records[index]
+        group = (record.get("source_dataset", "unknown"), int(record["label"]))
+        members = self.group_indices[group]
+        start = self.group_positions[index]
+        for offset in range(1, len(members)):
+            yield members[(start + offset) % len(members)]
+
     def __getitem__(self, index: int) -> dict:
         record = self.records[index]
-        with Image.open(record["path"]) as image:
-            clean = np.asarray(image.convert("RGB"))
+        try:
+            clean = self._read_clean_image(record)
+        except (OSError, UnidentifiedImageError, ValueError) as error:
+            if not self.for_training:
+                raise RuntimeError(f"Could not open evaluation image at {record['path']}: {error}") from error
+            if record["path"] not in self.reported_bad_paths:
+                warnings.warn(
+                    f"Skipping unreadable training image {record['path']}; selecting a same-source, same-label replacement: {error}",
+                    RuntimeWarning,
+                )
+                self.reported_bad_paths.add(record["path"])
+            for replacement_index in self._replacement_indices(index):
+                replacement = self.records[replacement_index]
+                try:
+                    clean = self._read_clean_image(replacement)
+                    record = replacement
+                    break
+                except (OSError, UnidentifiedImageError, ValueError):
+                    continue
+            else:
+                raise RuntimeError(
+                    f"No readable same-source, same-label replacement exists for {record['path']}"
+                ) from error
         augmented = self.augmentation(image=clean)["image"] if self.augmentation else clean.copy()
         return {
             "image": self._to_tensor(clean, self.image_size, self.normalization_mean, self.normalization_std),
