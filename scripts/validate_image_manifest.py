@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
@@ -21,7 +22,8 @@ def is_readable(path: Path) -> tuple[bool, str | None]:
         with Image.open(path) as image:
             image.convert("RGB").load()
         return True, None
-    except (OSError, UnidentifiedImageError, ValueError) as error:
+    # Pillow raises SyntaxError for some malformed PNG chunks.
+    except (OSError, UnidentifiedImageError, ValueError, SyntaxError) as error:
         return False, f"{type(error).__name__}: {error}"
 
 
@@ -30,7 +32,10 @@ def main() -> None:
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--invalid-report", required=True, type=Path)
+    parser.add_argument("--workers", type=int, default=1, help="Concurrent image verifiers (default: 1).")
     args = parser.parse_args()
+    if args.workers < 1:
+        raise ValueError("--workers must be at least 1")
     if args.output.exists() or args.invalid_report.exists():
         raise FileExistsError("Refusing to overwrite an existing validated manifest or invalid-image report.")
     with args.manifest.open(newline="", encoding="utf-8") as handle:
@@ -39,14 +44,19 @@ def main() -> None:
             raise ValueError(f"Manifest needs fields: {', '.join(FIELDS)}")
         source = list(reader)
     valid, invalid = [], []
-    for index, row in enumerate(source, 1):
+    def inspect(row: dict) -> tuple[dict, bool, str | None]:
         readable, error = is_readable(Path(row["path"]))
-        if readable:
-            valid.append(row)
-        else:
-            invalid.append({**row, "error": error})
-        if index % 1000 == 0 or index == len(source):
-            print(f"[INFO] verified={index}/{len(source)} valid={len(valid)} invalid={len(invalid)}", flush=True)
+        return row, readable, error
+
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        inspected = executor.map(inspect, source)
+        for index, (row, readable, error) in enumerate(inspected, 1):
+            if readable:
+                valid.append(row)
+            else:
+                invalid.append({**row, "error": error})
+            if index % 1000 == 0 or index == len(source):
+                print(f"[INFO] verified={index}/{len(source)} valid={len(valid)} invalid={len(invalid)}", flush=True)
     if not valid:
         raise RuntimeError("No readable images remained; refusing to write an empty manifest.")
     args.output.parent.mkdir(parents=True, exist_ok=True)
