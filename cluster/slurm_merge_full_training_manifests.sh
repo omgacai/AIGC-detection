@@ -11,10 +11,17 @@
 set -eu
 REPO_ROOT="${SLURM_SUBMIT_DIR:?Submit from the repository root}"
 DATA_ROOT="${AIGC_DATA_ROOT:-${HOME}/aigc-storage/data}"
+# The system Python on normal nodes has no PyTorch.  Importing the current
+# data package loads the dataset module, so use the already-bootstrapped A100
+# environment even though this manifest job itself is CPU-only.
+VENV="${AIGC_A100_VENV:-${HOME}/aigc-storage/cache/venvs/a100-cu121-py312}"
 for manifest in sid_all_all.csv cifake_all.csv wildfake_all.csv; do
   [ -f "${DATA_ROOT}/manifests/${manifest}" ] || { echo "ERROR: Missing ${DATA_ROOT}/manifests/${manifest}" >&2; exit 2; }
 done
+[ -f "${VENV}/bin/activate" ] || { echo "ERROR: Python environment missing: ${VENV}" >&2; exit 2; }
+. "${VENV}/bin/activate"
 export PYTHONPATH="${REPO_ROOT}/src"
+echo "[INFO] python=$(python --version)"
 python3 "${REPO_ROOT}/scripts/merge_manifests.py" \
   --manifest "${DATA_ROOT}/manifests/sid_all_all.csv" \
   --manifest "${DATA_ROOT}/manifests/cifake_all.csv" \

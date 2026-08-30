@@ -11,11 +11,30 @@ from robust_aigc.data.registry import load_manifest, write_manifest
 from robust_aigc.data.splits import persist_split_manifests, validate_split_isolation
 
 
+# These paths belong to the organiser's reference benchmark and are evaluation
+# only.  Keep the check deliberately specific: other generated images may have
+# a directory named "coco" and must not be rejected on that name alone.
+RESERVED_COMPETITION_PATH_FRAGMENTS = (
+    "/competition_reference/",
+    "/images/real/coco/",
+    "/images/diffusion_based/dalle/",
+)
+
+
 def merge_manifests(paths: list[Path]) -> list[dict]:
     records = [record for path in paths for record in load_manifest(path)]
     seen: set[str] = set()
     for record in records:
         path = str(Path(record["path"]).expanduser().resolve())
+        normalized_path = path.lower()
+        source_dataset = str(record.get("source_dataset", "")).lower()
+        if source_dataset.startswith("competition_") or any(
+            fragment in normalized_path for fragment in RESERVED_COMPETITION_PATH_FRAGMENTS
+        ):
+            raise ValueError(
+                "Competition reference data detected in a training-manifest input; "
+                "COCO/DALL·E reference material must remain evaluation-only."
+            )
         if path in seen:
             raise ValueError(f"Duplicate image path across input manifests: {path}")
         seen.add(path)
