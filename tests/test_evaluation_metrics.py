@@ -1,5 +1,6 @@
 from scripts.evaluate import by_source_metrics
 from scripts.prepare_reference_benchmark import records
+from scripts.validate_image_manifest import is_readable
 from cluster.competition_reference_archives import ARCHIVES
 from robust_aigc.utils.config import load_toml
 from robust_aigc.utils.metrics import binary_classification_metrics
@@ -33,3 +34,11 @@ def test_reference_evaluation_is_clean_only():
 
 def test_only_official_reference_archives_are_listed():
     assert ARCHIVES == ("Images/Real/Coco.zip", "Images/Diffusion_based/DALLE.zip")
+
+
+def test_image_readability_detects_a_bad_payload(tmp_path):
+    bad = tmp_path / "broken.png"
+    bad.write_bytes(b"not an image")
+    readable, error = is_readable(bad)
+    assert not readable
+    assert error is not None
