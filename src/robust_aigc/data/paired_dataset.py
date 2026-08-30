@@ -59,7 +59,9 @@ class PairedAIGCImageDataset(Dataset):
         record = self.records[index]
         try:
             clean = self._read_clean_image(record)
-        except (OSError, UnidentifiedImageError, ValueError) as error:
+        # Pillow uses SyntaxError for some structurally invalid PNG chunks.
+        # Treat it as an unreadable image, not as a training-code failure.
+        except (OSError, UnidentifiedImageError, ValueError, SyntaxError) as error:
             if not self.for_training:
                 raise RuntimeError(f"Could not open evaluation image at {record['path']}: {error}") from error
             if record["path"] not in self.reported_bad_paths:
@@ -74,7 +76,7 @@ class PairedAIGCImageDataset(Dataset):
                     clean = self._read_clean_image(replacement)
                     record = replacement
                     break
-                except (OSError, UnidentifiedImageError, ValueError):
+                except (OSError, UnidentifiedImageError, ValueError, SyntaxError):
                     continue
             else:
                 raise RuntimeError(
