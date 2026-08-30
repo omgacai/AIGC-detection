@@ -6,7 +6,9 @@ import argparse
 
 
 ARCHIVES = (
-    "Images/Real/Coco.zip",
+    # WildFake's real archive names are lower-case (afhq, ffhq, laion5b,
+    # etc.). ModelsScope include paths are case-sensitive.
+    "Images/Real/coco.zip",
     "Images/Diffusion_based/DALLE.zip",
 )
 

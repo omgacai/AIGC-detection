@@ -33,7 +33,7 @@ def test_reference_evaluation_is_clean_only():
 
 
 def test_only_official_reference_archives_are_listed():
-    assert ARCHIVES == ("Images/Real/Coco.zip", "Images/Diffusion_based/DALLE.zip")
+    assert ARCHIVES == ("Images/Real/coco.zip", "Images/Diffusion_based/DALLE.zip")
 
 
 def test_image_readability_detects_a_bad_payload(tmp_path):
