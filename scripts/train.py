@@ -91,8 +91,8 @@ def optimizer_parameter_groups(model, config: dict) -> list[dict]:
     return groups
 
 
-def build_loader(records, image_size, augmentation, batch_size, workers, balance_classes=False, balance_datasets=False, normalization_mean=(0.485, 0.456, 0.406), normalization_std=(0.229, 0.224, 0.225)):
-    dataset = PairedAIGCImageDataset(records, image_size, augmentation, normalization_mean, normalization_std)
+def build_loader(records, image_size, augmentation, batch_size, workers, balance_classes=False, balance_datasets=False, normalization_mean=(0.485, 0.456, 0.406), normalization_std=(0.229, 0.224, 0.225), for_training=True):
+    dataset = PairedAIGCImageDataset(records, image_size, augmentation, normalization_mean, normalization_std, for_training=for_training)
     weights = balanced_sample_weights(records, balance_classes, balance_datasets)
     sampler = WeightedRandomSampler(weights, len(records), replacement=True) if weights is not None else None
     return DataLoader(dataset, batch_size=batch_size, shuffle=sampler is None, sampler=sampler, num_workers=workers, pin_memory=True, persistent_workers=workers > 0)
@@ -170,16 +170,20 @@ def train_one_epoch(model, loader, optimizer, scaler, device, accumulation, loss
 
 
 @torch.inference_mode()
-def validate(model, loader, device):
+def validate(model, loader, device, *, prefix: str, threshold: float = 0.5):
     model.eval(); labels, scores, total_loss = [], [], 0.0
     for batch in loader:
         image, label = batch["image"].to(device, non_blocking=True), batch["label"].to(device, non_blocking=True)
         with torch.autocast("cuda", dtype=torch.float16): logits = model(image)["logits"]
         total_loss += F.binary_cross_entropy_with_logits(logits, label).item() * label.numel()
         labels.extend(label.int().cpu().tolist()); scores.extend(torch.sigmoid(logits).float().cpu().tolist())
-    metrics = binary_operating_point_metrics(labels, scores)
+    metrics = {f"{prefix}{name}": value for name, value in binary_operating_point_metrics(labels, scores).items()}
     targets, probabilities = torch.tensor(labels), torch.tensor(scores)
-    metrics.update({"internal_val_loss": total_loss / len(labels), "internal_val_accuracy": float(((probabilities >= 0.5).int() == targets).float().mean())})
+    metrics.update({
+        f"{prefix}loss": total_loss / len(labels),
+        f"{prefix}accuracy": float(((probabilities >= threshold).int() == targets).float().mean()),
+        f"{prefix}decision_threshold": threshold,
+    })
     return metrics
 
 
@@ -200,6 +204,16 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device.type != "cuda": raise RuntimeError("Submit training through Slurm on a GPU node; CUDA is unavailable.")
     training, data = config["training"], config["data"]
+    reference_config = config.get("reference_evaluation", {})
+    reference_records = []
+    if reference_config.get("enabled", False):
+        reference_manifest = Path(os.path.expandvars(reference_config["manifest"])).expanduser()
+        reference_split = reference_config.get("split", "organizer_demo")
+        if reference_split != "organizer_demo":
+            raise ValueError("reference_evaluation must use split='organizer_demo'")
+        reference_records = [record for record in load_manifest(reference_manifest) if record["split"] == reference_split]
+        if not reference_records or {int(record["label"]) for record in reference_records} != {0, 1}:
+            raise ValueError("Competition reference evaluation requires both real and AIGC organizer_demo records")
     model = DINOv3Forensic(config).to(device)
     optimizer = AdamW(optimizer_parameter_groups(model, config), weight_decay=config["optimizer"]["weight_decay"])
     epochs, warmup = training["epochs"], config["scheduler"]["warmup_epochs"]
@@ -248,7 +262,19 @@ def main():
     stop_epoch = job_stop_epoch(start, epochs, args.epochs_this_job)
     normalization_mean = data.get("normalization_mean", (0.485, 0.456, 0.406))
     normalization_std = data.get("normalization_std", (0.229, 0.224, 0.225))
-    val_loader = build_loader(val_records, data["image_size"], None, training["batch_size"], training["num_workers"], normalization_mean=normalization_mean, normalization_std=normalization_std)
+    val_loader = build_loader(val_records, data["image_size"], None, training["batch_size"], training["num_workers"], normalization_mean=normalization_mean, normalization_std=normalization_std, for_training=False)
+    reference_loader = None
+    if reference_records:
+        reference_loader = build_loader(
+            reference_records,
+            data["image_size"],
+            None,
+            reference_config.get("batch_size", training["batch_size"]),
+            reference_config.get("num_workers", training["num_workers"]),
+            normalization_mean=normalization_mean,
+            normalization_std=normalization_std,
+            for_training=False,
+        )
     for epoch in range(start, stop_epoch):
         stage = curriculum_stage(config["curriculum"], epoch); reporter.logger.info("epoch=%d curriculum=%s", epoch, stage["name"])
         augmentation_mode = data.get("training_augmentation")
@@ -261,9 +287,13 @@ def main():
         metrics = train_one_epoch(model, train_loader, optimizer, scaler, device, training["gradient_accumulation_steps"], config["loss"], config["optimizer"]["gradient_clip_norm"], training["label_smoothing"], ema, reporter.logger, epoch, config["logging"].get("batch_log_every_steps", 0))
         if ema is not None:
             with ema.average_parameters(model):
-                metrics.update(validate(model, val_loader, device))
+                metrics.update(validate(model, val_loader, device, prefix="internal_val_", threshold=config["metrics"].get("threshold", 0.5)))
+                if reference_loader is not None:
+                    metrics.update(validate(model, reference_loader, device, prefix="competition_", threshold=reference_config.get("threshold", 0.5)))
         else:
-            metrics.update(validate(model, val_loader, device))
+            metrics.update(validate(model, val_loader, device, prefix="internal_val_", threshold=config["metrics"].get("threshold", 0.5)))
+            if reference_loader is not None:
+                metrics.update(validate(model, reference_loader, device, prefix="competition_", threshold=reference_config.get("threshold", 0.5)))
         metrics["learning_rate"] = optimizer.param_groups[0]["lr"]
         reporter.report(epoch, metrics)
         # Advance before serializing: a resumed job must start with the next

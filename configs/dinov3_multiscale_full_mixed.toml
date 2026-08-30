@@ -76,10 +76,20 @@ label_smoothing = 0.05
 save_every_epoch = true
 
 [metrics]
-primary_checkpoint_metric = "tpr_at_1_fpr"
+primary_checkpoint_metric = "internal_val_tpr_at_1_fpr"
 primary_checkpoint_mode = "max"
 report_every_epochs = 1
-track = ["train_loss", "train_prediction_consistency_loss", "train_supcon_loss", "internal_val_loss", "internal_val_accuracy", "roc_auc", "tpr_at_1_fpr", "fpr_at_99_tpr"]
+threshold = 0.5
+track = ["train_loss", "train_prediction_consistency_loss", "train_supcon_loss", "internal_val_loss", "internal_val_accuracy", "internal_val_tpr_at_1_fpr", "internal_val_tpr_at_5_fpr", "internal_val_fpr_at_99_tpr", "internal_val_fpr_at_95_tpr", "competition_tpr_at_1_fpr", "competition_tpr_at_5_fpr", "competition_fpr_at_99_tpr", "competition_fpr_at_95_tpr"]
+
+[reference_evaluation]
+# This organiser reference set is evaluated only; it is never added to training.
+enabled = true
+manifest = "${AIGC_COMPETITION_MANIFEST}"
+split = "organizer_demo"
+batch_size = 64
+num_workers = 4
+threshold = 0.5
 
 [logging]
 tensorboard = true
@@ -92,7 +102,7 @@ batch_log_every_steps = 1
 enabled = true
 root = "${AIGC_CHECKPOINT_ROOT}"
 run_directory_template = "{started_at}_{model}_{run_name}"
-monitor = "tpr_at_1_fpr"
+monitor = "internal_val_tpr_at_1_fpr"
 mode = "max"
 save_last = true
 save_primary_best = true
@@ -100,8 +110,14 @@ include_optimizer_state = true
 include_scheduler_state = true
 
 [checkpointing.tracked_metric_modes]
-tpr_at_1_fpr = "max"
-fpr_at_99_tpr = "min"
+internal_val_tpr_at_1_fpr = "max"
+internal_val_tpr_at_5_fpr = "max"
+internal_val_fpr_at_99_tpr = "min"
+internal_val_fpr_at_95_tpr = "min"
+competition_tpr_at_1_fpr = "max"
+competition_tpr_at_5_fpr = "max"
+competition_fpr_at_99_tpr = "min"
+competition_fpr_at_95_tpr = "min"
 
 # Exactly one corruption is sampled for the augmented view; clean images stay
 # in the classification path and are never replaced by chained transforms.

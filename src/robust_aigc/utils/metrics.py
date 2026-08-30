@@ -24,13 +24,32 @@ def binary_operating_point_metrics(labels, scores) -> dict[str, float]:
         raise ValueError("labels and scores must be one-dimensional arrays with equal length")
     if len(labels_array) == 0 or set(np.unique(labels_array)) != {0, 1}:
         raise ValueError("operating-point metrics require at least one real (0) and one AI (1) example")
-    fpr, tpr, _ = roc_curve(labels_array, scores_array, pos_label=1)
-    tpr_at_1_fpr = float(np.max(tpr[fpr <= 0.01]))
-    fpr_at_99_tpr = float(np.min(fpr[tpr >= 0.99]))
+    fpr, tpr, thresholds = roc_curve(labels_array, scores_array, pos_label=1)
+
+    def tpr_at_fpr(target_fpr: float) -> tuple[float, float]:
+        candidates = np.flatnonzero(fpr <= target_fpr)
+        selected = candidates[np.argmax(tpr[candidates])]
+        return float(tpr[selected]), float(thresholds[selected])
+
+    def fpr_at_tpr(target_tpr: float) -> tuple[float, float]:
+        candidates = np.flatnonzero(tpr >= target_tpr)
+        selected = candidates[np.argmin(fpr[candidates])]
+        return float(fpr[selected]), float(thresholds[selected])
+
+    tpr_at_1_fpr, threshold_at_1_fpr = tpr_at_fpr(0.01)
+    tpr_at_5_fpr, threshold_at_5_fpr = tpr_at_fpr(0.05)
+    fpr_at_99_tpr, threshold_at_99_tpr = fpr_at_tpr(0.99)
+    fpr_at_95_tpr, threshold_at_95_tpr = fpr_at_tpr(0.95)
     return {
         "roc_auc": float(roc_auc_score(labels_array, scores_array)),
         "tpr_at_1_fpr": tpr_at_1_fpr,
+        "tpr_at_5_fpr": tpr_at_5_fpr,
         "fpr_at_99_tpr": fpr_at_99_tpr,
+        "fpr_at_95_tpr": fpr_at_95_tpr,
+        "threshold_at_1_fpr": threshold_at_1_fpr,
+        "threshold_at_5_fpr": threshold_at_5_fpr,
+        "threshold_at_99_tpr": threshold_at_99_tpr,
+        "threshold_at_95_tpr": threshold_at_95_tpr,
     }
 
 

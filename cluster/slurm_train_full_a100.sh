@@ -33,6 +33,7 @@ export PYTHONPATH="$REPO_ROOT/src"
 export HF_HOME="$CACHE_ROOT/huggingface"
 export AIGC_DATA_ROOT="$DATA_ROOT" AIGC_CACHE_ROOT="$CACHE_ROOT"
 export AIGC_CHECKPOINT_ROOT="$CHECKPOINT_ROOT" AIGC_OUTPUT_ROOT="$OUTPUT_ROOT"
+export AIGC_COMPETITION_MANIFEST="${AIGC_COMPETITION_MANIFEST:-${DATA_ROOT}/manifests/competition_coco_dalle_reference.csv}"
 echo "[INFO] host=$(hostname) python=$(python --version) gpu=$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader)"
 set -- --config "$MODEL_CONFIG" --manifest "$MANIFEST" --epochs-this-job "$EPOCHS_THIS_JOB"
 if [ -n "$RESUME" ]; then set -- "$@" --resume "$RESUME"; elif [ -n "$RUN_DIRECTORY" ]; then set -- "$@" --run-directory "$RUN_DIRECTORY"; fi

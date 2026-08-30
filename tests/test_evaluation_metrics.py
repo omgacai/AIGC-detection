@@ -11,7 +11,11 @@ def test_evaluation_metrics_include_operating_points_and_threshold_metrics():
     assert metrics["accuracy"] == 1.0
     assert metrics["balanced_accuracy"] == 1.0
     assert metrics["tpr_at_1_fpr"] == 1.0
+    assert metrics["tpr_at_5_fpr"] == 1.0
     assert metrics["fpr_at_99_tpr"] == 0.0
+    assert metrics["fpr_at_95_tpr"] == 0.0
+    assert 0.0 <= metrics["threshold_at_1_fpr"] <= 1.0
+    assert 0.0 <= metrics["threshold_at_5_fpr"] <= 1.0
 
 
 def test_by_source_metrics_keeps_sources_separate():
